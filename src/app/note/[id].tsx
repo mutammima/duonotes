@@ -13,12 +13,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import {
-  MarkdownTextInput,
-  type MarkdownStyle,
-  parseExpensiMark,
-} from '@expensify/react-native-live-markdown';
-
 import { FormatToolbar } from '@/components/format-toolbar';
 import { LinkPartnerSheet } from '@/components/link-partner-sheet';
 import { PinModal } from '@/components/pin-modal';
@@ -225,23 +219,6 @@ export default function NoteEditorScreen() {
     return false;
   };
 
-  // Live-formatting styles: dim the syntax marks, enlarge headings, style code.
-  const mdStyle: MarkdownStyle = {
-    syntax: { color: theme.textSecondary },
-    h1: { fontSize: 24 },
-    link: { color: '#3c87f7' },
-    code: {
-      color: theme.text,
-      backgroundColor: theme.backgroundElement,
-    },
-    blockquote: {
-      borderColor: theme.backgroundSelected,
-      borderWidth: 4,
-      marginLeft: 6,
-      paddingLeft: 8,
-    },
-  };
-
   const lockIcon = note.lockType === 'biometric' ? 'finger-print' : 'lock-closed';
   const isShared = note.isShared;
 
@@ -306,11 +283,9 @@ export default function NoteEditorScreen() {
               )}
               <View style={styles.paper}>
                 <RuledLines color={theme.backgroundSelected} />
-                <MarkdownTextInput
+                <TextInput
                   value={body}
                   onChangeText={changeBody}
-                  parser={parseExpensiMark}
-                  markdownStyle={mdStyle}
                   selection={caret}
                   onSelectionChange={(e) => {
                     setSelection(e.nativeEvent.selection);
