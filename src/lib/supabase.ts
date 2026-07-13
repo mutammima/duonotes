@@ -14,15 +14,20 @@ const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
  */
 export const isSupabaseConfigured = Boolean(url && anonKey);
 
-// All DuoNotes tables live in a dedicated `duonotes` schema so this app can
-// share a Supabase project with other apps without colliding. The schema must
-// also be added to Project Settings → API → "Exposed schemas".
-export const DB_SCHEMA = 'duonotes';
+// DuoNotes tables live in the `public` schema but are prefixed with `duonotes_`
+// so this app can share a Supabase project with other apps without colliding.
+export const TABLES = {
+  profiles: 'duonotes_profiles',
+  notes: 'duonotes_notes',
+} as const;
+
+export const RPC = {
+  linkPartner: 'duonotes_link_partner',
+} as const;
 
 // The anon (public) key is safe to ship in a client app — access is governed by
 // the Row-Level Security policies in `supabase/schema.sql`, not by hiding it.
 export const supabase = createClient(url ?? 'https://placeholder.supabase.co', anonKey ?? 'placeholder', {
-  db: { schema: DB_SCHEMA },
   auth: {
     storage: AsyncStorage,
     autoRefreshToken: true,

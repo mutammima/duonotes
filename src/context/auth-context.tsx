@@ -9,7 +9,7 @@
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
-import { supabase } from '@/lib/supabase';
+import { RPC, supabase, TABLES } from '@/lib/supabase';
 import type { User } from '@/lib/types';
 
 interface AuthContextValue {
@@ -37,13 +37,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const syncProfile = useCallback(async (sUser: SupabaseUser): Promise<User | null> => {
     const fallbackName = (sUser.user_metadata?.name as string | undefined) ?? sUser.email?.split('@')[0] ?? 'Me';
     await supabase
-      .from('profiles')
+      .from(TABLES.profiles)
       .upsert(
         { id: sUser.id, email: sUser.email, name: fallbackName },
         { onConflict: 'id', ignoreDuplicates: true },
       );
     const { data, error } = await supabase
-      .from('profiles')
+      .from(TABLES.profiles)
       .select('id, email, name, partner_id')
       .eq('id', sUser.id)
       .single();
@@ -104,7 +104,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const linkPartner = useCallback(
     async (email: string) => {
-      const { error } = await supabase.rpc('link_partner', { partner_email: email });
+      const { error } = await supabase.rpc(RPC.linkPartner, { partner_email: email });
       if (error) throw new Error(error.message);
       await refreshProfile();
     },

@@ -11,7 +11,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useAuth } from '@/context/auth-context';
-import { DB_SCHEMA, supabase } from '@/lib/supabase';
+import { supabase, TABLES } from '@/lib/supabase';
 import type { LockType, Note, NoteRow } from '@/lib/types';
 
 interface NotesContextValue {
@@ -59,7 +59,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     namesRef.current = Object.fromEntries((profiles ?? []).map((p) => [p.id, p.name]));
 
     const { data, error } = await supabase
-      .from('notes')
+      .from(TABLES.notes)
       .select('id, owner_id, title, body, lock_type, is_shared, updated_at')
       .order('updated_at', { ascending: false });
     if (!error && data) setNotes((data as NoteRow[]).map(mapRow));
@@ -77,7 +77,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
     const channel = supabase
       .channel('notes-changes')
-      .on('postgres_changes', { event: '*', schema: DB_SCHEMA, table: 'notes' }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.notes }, () => {
         fetchNotes();
       })
       .subscribe();
@@ -98,7 +98,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const createNote = useCallback(async (): Promise<Note | null> => {
     if (!user) return null;
     const { data, error } = await supabase
-      .from('notes')
+      .from(TABLES.notes)
       .insert({ owner_id: user.id, title: '', body: '' })
       .select('id, owner_id, title, body, lock_type, is_shared, updated_at')
       .single();
@@ -115,14 +115,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       if (patch.title !== undefined) dbPatch.title = patch.title;
       if (patch.body !== undefined) dbPatch.body = patch.body;
       if (patch.lockType !== undefined) dbPatch.lock_type = patch.lockType;
-      await supabase.from('notes').update(dbPatch).eq('id', id);
+      await supabase.from(TABLES.notes).update(dbPatch).eq('id', id);
     },
     [patchLocal],
   );
 
   const deleteNote = useCallback(async (id: string) => {
     setNotes((prev) => prev.filter((n) => n.id !== id));
-    await supabase.from('notes').delete().eq('id', id);
+    await supabase.from(TABLES.notes).delete().eq('id', id);
   }, []);
 
   const toggleShared = useCallback(
@@ -131,7 +131,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       if (!current) return;
       const next = !current.isShared;
       patchLocal(id, { isShared: next });
-      await supabase.from('notes').update({ is_shared: next }).eq('id', id);
+      await supabase.from(TABLES.notes).update({ is_shared: next }).eq('id', id);
     },
     [notes, patchLocal],
   );
@@ -139,7 +139,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const setLock = useCallback<NotesContextValue['setLock']>(
     async (id, lockType) => {
       patchLocal(id, { lockType });
-      await supabase.from('notes').update({ lock_type: lockType }).eq('id', id);
+      await supabase.from(TABLES.notes).update({ lock_type: lockType }).eq('id', id);
     },
     [patchLocal],
   );

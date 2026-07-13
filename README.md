@@ -86,35 +86,35 @@ supabase/
 Do this **once**. It's free and takes about five minutes. Until it's done, the app
 shows a friendly "Almost there" screen instead of the notes UI.
 
-DuoNotes keeps all of its tables in a dedicated **`duonotes`** Postgres schema, so
-you can safely reuse a Supabase project that already hosts another app — nothing
-here touches `auth.users`, the `public` schema, or your other app's data.
+DuoNotes puts its tables in the `public` schema but prefixes them all with
+**`duonotes_`** (`duonotes_notes`, `duonotes_profiles`), so you can safely reuse a
+Supabase project that already hosts another app — nothing here collides with your
+other tables or touches `auth.users`.
 
 1. **Create (or reuse) a project** at [supabase.com](https://supabase.com). The
    free tier is plenty for two people.
 2. **Create the database.** In the dashboard: **SQL Editor → New query**, paste the
    entire contents of [`supabase/schema.sql`](./supabase/schema.sql), and click
-   **Run**. This creates the `duonotes` schema, tables, security rules, and realtime.
-3. **Expose the schema to the API.** **Project Settings → API → "Exposed schemas"**
-   → add `duonotes` to the list (keep the existing ones like `public`) → **Save**.
-   *(Without this, the app can't see its own tables.)*
-4. **Turn off email confirmation** (optional but easiest for two people):
+   **Run**. This creates the prefixed tables, security rules, and realtime setup.
+3. **Turn off email confirmation** (optional but easiest for two people):
    **Authentication → Sign In / Providers → Email → turn *Confirm email* off**.
    Otherwise each of you must click a confirmation link before first sign-in.
-5. **Get your keys:** **Project Settings → API** — copy the **Project URL** and the
-   **anon / public** API key.
-6. **Add them to the app.** Copy `.env.example` to `.env` and fill in:
+4. **Get your keys:** **Project Settings → API keys** — copy the **Publishable**
+   key (`sb_publishable_…`; the legacy **anon** key also works).
+5. **Add them to the app.** Copy `.env.example` to `.env` and fill in:
    ```
    EXPO_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
-   EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-public-key
+   EXPO_PUBLIC_SUPABASE_ANON_KEY=your-publishable-key
    ```
-   (The anon key is a public client key — safe to ship. Security is enforced by the
-   Row-Level Security policies, not by hiding the key.)
-7. **Restart** the dev server so Expo reloads `.env`.
+   (This is a public client key — safe to ship. Security is enforced by the
+   Row-Level Security policies, not by hiding the key. Never ship the **secret**
+   / service_role key.)
+6. **Restart** the dev server so Expo reloads `.env`.
 
 > **Sharing a project with another app?** A Supabase project has one shared
 > `auth.users`, so both apps share the same login pool. DuoNotes avoids
-> interfering by creating its profile rows from the app (no `auth.users` trigger).
+> interfering by creating its profile rows from the app (no `auth.users` trigger)
+> and prefixing every table with `duonotes_`.
 
 ### Linking the two of you
 
