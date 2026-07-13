@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { FormatToolbar } from '@/components/format-toolbar';
 import { LinkPartnerSheet } from '@/components/link-partner-sheet';
+import { LiveMarkdownInput } from '@/components/live-markdown-input';
 import { PinModal } from '@/components/pin-modal';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -283,7 +284,7 @@ export default function NoteEditorScreen() {
               )}
               <View style={styles.paper}>
                 <RuledLines color={theme.backgroundSelected} />
-                <TextInput
+                <LiveMarkdownInput
                   value={body}
                   onChangeText={changeBody}
                   selection={caret}

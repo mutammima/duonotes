@@ -22,7 +22,6 @@
       }
     },
     "ios": {
-      "icon": "./assets/expo.icon",
       "supportsTablet": true,
       "bundleIdentifier": "com.mutammima.duonotes",
       "infoPlist": {
@@ -32,9 +31,8 @@
     "android": {
       "package": "com.mutammima.duonotes",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#FFA5C3",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
@@ -54,9 +52,9 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#FFA5C3",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "imageWidth": 96
         }
       ],
       "expo-secure-store",
