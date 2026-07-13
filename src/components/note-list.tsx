@@ -6,6 +6,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { stripMarkdown } from '@/lib/markdown';
 import type { Note } from '@/lib/types';
 
 export function NoteList({ notes, emptyLabel }: { notes: Note[]; emptyLabel: string }) {
@@ -42,7 +43,7 @@ function NoteRow({ note }: { note: Note }) {
 
   const preview = locked
     ? 'Locked — tap to unlock'
-    : note.body.replace(/\n+/g, ' ').trim() || 'No additional text';
+    : stripMarkdown(note.body) || 'No additional text';
 
   return (
     <Pressable
