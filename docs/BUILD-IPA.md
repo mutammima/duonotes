@@ -83,8 +83,37 @@ links the other in **Settings → Partner** (by email), and shared notes sync li
 
 ## Updating later
 
+The app is configured for **EAS Update**, so most changes ship over the air —
+no Mac, no rebuild, no re-import. The rule depends on *what* changed:
+
+| What you changed | How it ships |
+| --- | --- |
+| JS, styles, components, most features | `eas update` (over the air) |
+| A native module / SDK version / native `app.json` config | New `.ipa` (rebuild + re-import) |
+
+The `runtimeVersion` policy is `fingerprint`, so this is enforced automatically:
+an OTA update only applies to a build whose native layer matches. If you try to
+publish JS that needs native code the installed build lacks, EAS reports "no
+compatible builds" instead of shipping something broken.
+
+### Over-the-air update (JS-only changes) — from any machine, incl. Windows
+
+```bash
+# from a clone that has your .env (the EXPO_PUBLIC_SUPABASE_* keys are inlined
+# into the JS bundle at publish time)
+eas update --channel production --message "what changed"
+```
+
+Each phone applies it on next launch (`updates.checkAutomatically: ON_LOAD`).
+The channel is baked into the binary via `updates.requestHeaders`
+(`expo-channel-name: production`) in `app.json`, which is why a locally-built
+`.ipa` receives updates even though it wasn't made with `eas build`.
+
+### Native change (or first install of EAS Update) — rebuild on the Mac
+
 Re-run `bash scripts/build-unsigned-ipa.sh` after pulling changes, then re-import
-the new `.ipa` in SideStore/LiveContainer.
+the new `.ipa` in SideStore/LiveContainer. The build embeds `expo-updates`, so
+from then on JS-only changes flow over the air as above.
 
 ## Alternative: paid Apple Developer + EAS (no Mac)
 
