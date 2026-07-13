@@ -18,12 +18,14 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
+import { type ThemePreference, useThemePreference } from '@/context/theme-context';
 import { useTheme } from '@/hooks/use-theme';
 import { clearPin, getBiometricStatus, isPinSet, setPin, type BiometricStatus } from '@/lib/security';
 
 export default function SettingsScreen() {
   const theme = useTheme();
   const { user, signOut, linkPartner } = useAuth();
+  const { preference, setPreference } = useThemePreference();
 
   const [pinSet, setPinSet] = useState(false);
   const [biometric, setBiometric] = useState<BiometricStatus | null>(null);
@@ -99,6 +101,31 @@ export default function SettingsScreen() {
                 />
               </Pressable>
             )}
+          </Section>
+
+          <Section title="Appearance">
+            <View style={styles.segment}>
+              {THEME_OPTIONS.map((opt) => {
+                const active = preference === opt.key;
+                return (
+                  <Pressable
+                    key={opt.key}
+                    onPress={() => setPreference(opt.key)}
+                    style={[styles.segmentItem, active && { backgroundColor: theme.background }]}>
+                    <Ionicons
+                      name={opt.icon}
+                      size={18}
+                      color={active ? theme.text : theme.textSecondary}
+                    />
+                    <ThemedText
+                      type="small"
+                      style={{ color: active ? theme.text : theme.textSecondary, fontWeight: active ? '700' : '500' }}>
+                      {opt.label}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
+            </View>
           </Section>
 
           <Section title="Security">
@@ -265,9 +292,25 @@ export default function SettingsScreen() {
   }
 }
 
+const THEME_OPTIONS: { key: ThemePreference; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+  { key: 'light', label: 'Light', icon: 'sunny-outline' },
+  { key: 'dark', label: 'Dark', icon: 'moon-outline' },
+  { key: 'system', label: 'System', icon: 'phone-portrait-outline' },
+];
+
 const styles = StyleSheet.create({
   container: { flex: 1 },
   safeArea: { flex: 1 },
+  segment: { flexDirection: 'row', padding: Spacing.one, gap: Spacing.one },
+  segmentItem: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.one,
+    paddingVertical: Spacing.two,
+    borderRadius: Spacing.two,
+  },
   content: { padding: Spacing.four, gap: Spacing.four, paddingBottom: Spacing.six },
   title: { marginBottom: Spacing.one },
   section: { gap: Spacing.two },

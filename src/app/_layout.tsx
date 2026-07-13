@@ -1,11 +1,11 @@
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { useColorScheme } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { ConfigNotice } from '@/components/config-notice';
 import { AuthProvider, useAuth } from '@/context/auth-context';
+import { ThemePreferenceProvider, useThemeScheme } from '@/context/theme-context';
 import { NotesProvider } from '@/context/notes-context';
 import { isSupabaseConfigured } from '@/lib/supabase';
 
@@ -40,22 +40,32 @@ function RootNavigator() {
 }
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
-
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <AnimatedSplashOverlay />
-        {isSupabaseConfigured ? (
-          <AuthProvider>
-            <NotesProvider>
-              <RootNavigator />
-            </NotesProvider>
-          </AuthProvider>
-        ) : (
-          <ConfigNotice />
-        )}
-      </ThemeProvider>
+      <ThemePreferenceProvider>
+        <ThemedRoot />
+      </ThemePreferenceProvider>
     </GestureHandlerRootView>
+  );
+}
+
+/** Reads the resolved theme so the whole app (and the nav bar) reflects the
+ *  user's Light / Dark / System choice. */
+function ThemedRoot() {
+  const scheme = useThemeScheme();
+
+  return (
+    <ThemeProvider value={scheme === 'dark' ? DarkTheme : DefaultTheme}>
+      <AnimatedSplashOverlay />
+      {isSupabaseConfigured ? (
+        <AuthProvider>
+          <NotesProvider>
+            <RootNavigator />
+          </NotesProvider>
+        </AuthProvider>
+      ) : (
+        <ConfigNotice />
+      )}
+    </ThemeProvider>
   );
 }

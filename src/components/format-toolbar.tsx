@@ -27,14 +27,12 @@ export function FormatToolbar({
 
   return (
     <View style={[styles.bar, { backgroundColor: theme.backgroundElement, borderTopColor: theme.backgroundSelected }]}>
-      <Btn onPress={wrap('**')} label="B" bold color={theme.text} />
-      <Btn onPress={wrap('*')} label="I" italic color={theme.text} />
+      <Btn onPress={wrap('*')} label="B" bold color={theme.text} />
+      <Btn onPress={wrap('_')} label="I" italic color={theme.text} />
+      <Btn onPress={wrap('~')} label="S" strike color={theme.text} />
       <Divider color={theme.backgroundSelected} />
-      <Btn onPress={line('# ')} label="H1" color={theme.text} />
-      <Btn onPress={line('## ')} label="H2" color={theme.text} />
-      <Divider color={theme.backgroundSelected} />
+      <Btn onPress={line('# ')} label="H" color={theme.text} />
       <Btn onPress={line('- ')} icon="list" color={theme.text} />
-      <Btn onPress={line('- [ ] ')} icon="checkbox-outline" color={theme.text} />
     </View>
   );
 }
@@ -45,6 +43,7 @@ function Btn({
   icon,
   bold,
   italic,
+  strike,
   color,
 }: {
   onPress: () => void;
@@ -52,6 +51,7 @@ function Btn({
   icon?: keyof typeof Ionicons.glyphMap;
   bold?: boolean;
   italic?: boolean;
+  strike?: boolean;
   color: string;
 }) {
   return (
@@ -68,6 +68,7 @@ function Btn({
             { color },
             bold && { fontWeight: '800' },
             italic && { fontStyle: 'italic', fontWeight: '600' },
+            strike && { textDecorationLine: 'line-through', fontWeight: '600' },
           ]}>
           {label}
         </Text>
