@@ -6,6 +6,7 @@
  * linked partner — is loaded alongside the session.
  */
 
+import type { User as SupabaseUser } from '@supabase/supabase-js';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 import { supabase } from '@/lib/supabase';
@@ -31,11 +32,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [initializing, setInitializing] = useState(true);
 
-  const loadProfile = useCallback(async (userId: string): Promise<User | null> => {
+  // Ensure a profile row exists for this auth user (we have no auth.users
+  // trigger, to avoid touching other apps in the same project), then return it.
+  const syncProfile = useCallback(async (sUser: SupabaseUser): Promise<User | null> => {
+    const fallbackName = (sUser.user_metadata?.name as string | undefined) ?? sUser.email?.split('@')[0] ?? 'Me';
+    await supabase
+      .from('profiles')
+      .upsert(
+        { id: sUser.id, email: sUser.email, name: fallbackName },
+        { onConflict: 'id', ignoreDuplicates: true },
+      );
     const { data, error } = await supabase
       .from('profiles')
       .select('id, email, name, partner_id')
-      .eq('id', userId)
+      .eq('id', sUser.id)
       .single();
     if (error || !data) return null;
     return { id: data.id, email: data.email, name: data.name, partnerId: data.partner_id };
@@ -47,20 +57,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     supabase.auth.getSession().then(async ({ data }) => {
       if (!active) return;
-      if (data.session) setUser(await loadProfile(data.session.user.id));
+      if (data.session) setUser(await syncProfile(data.session.user));
       setInitializing(false);
     });
 
     const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (!active) return;
-      setUser(session ? await loadProfile(session.user.id) : null);
+      setUser(session ? await syncProfile(session.user) : null);
     });
 
     return () => {
       active = false;
       sub.subscription.unsubscribe();
     };
-  }, [loadProfile]);
+  }, [syncProfile]);
 
   const signUp = useCallback(async (name: string, email: string, password: string) => {
     if (!name.trim()) throw new Error('Please enter your name.');
@@ -89,8 +99,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refreshProfile = useCallback(async () => {
     const { data } = await supabase.auth.getUser();
-    if (data.user) setUser(await loadProfile(data.user.id));
-  }, [loadProfile]);
+    if (data.user) setUser(await syncProfile(data.user));
+  }, [syncProfile]);
 
   const linkPartner = useCallback(
     async (email: string) => {

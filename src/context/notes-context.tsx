@@ -11,7 +11,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useAuth } from '@/context/auth-context';
-import { supabase } from '@/lib/supabase';
+import { DB_SCHEMA, supabase } from '@/lib/supabase';
 import type { LockType, Note, NoteRow } from '@/lib/types';
 
 interface NotesContextValue {
@@ -77,7 +77,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
     const channel = supabase
       .channel('notes-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, () => {
+      .on('postgres_changes', { event: '*', schema: DB_SCHEMA, table: 'notes' }, () => {
         fetchNotes();
       })
       .subscribe();
