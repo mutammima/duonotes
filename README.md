@@ -154,11 +154,21 @@ The app reloads instantly as you edit files. This is the fastest loop and needs
 
 ---
 
-## 📦 Producing an installable `.ipa` with EAS Build (from Windows)
+## 📦 Producing an installable `.ipa`
 
-Expo Go is great for testing, but to install DuoNotes as a **standalone app** on
-your iPhones you need an `.ipa`. **EAS Build compiles iOS apps in the cloud, so you
-do _not_ need a Mac.** `eas.json` in this repo is already configured.
+Expo Go is great for testing, but to install DuoNotes as a **standalone app** you
+need an `.ipa`. There are two routes:
+
+- **Free — build an unsigned `.ipa` on a Mac, install via SideStore / LiveContainer.**
+  No Apple Developer account, no cloud. **This is the recommended route for personal
+  use → see [`docs/BUILD-IPA.md`](./docs/BUILD-IPA.md).**
+- **Cloud — EAS Build (no Mac), needs a paid Apple Developer account.** Details below.
+
+### EAS Build (cloud, from Windows)
+
+**EAS Build compiles iOS apps in the cloud, so you do _not_ need a Mac.** `eas.json`
+in this repo is already configured. (Requires a paid Apple Developer account to sign
+for a device.)
 
 ### 1. Install the EAS CLI and log in
 
@@ -171,6 +181,10 @@ eas login            # create a free Expo account if you don't have one
 
 ```bash
 eas init             # creates/links an EAS project + writes the projectId
+
+# Cloud builds don't see your local .env, so give EAS the Supabase values:
+eas env:create --name EXPO_PUBLIC_SUPABASE_URL --value "https://your-ref.supabase.co" --environment preview --environment production --visibility plaintext
+eas env:create --name EXPO_PUBLIC_SUPABASE_ANON_KEY --value "your-publishable-key" --environment preview --environment production --visibility plaintext
 ```
 
 ### 3. Apple credentials
