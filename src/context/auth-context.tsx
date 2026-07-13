@@ -10,6 +10,7 @@ import type { User as SupabaseUser } from '@supabase/supabase-js';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 import { RPC, supabase, TABLES } from '@/lib/supabase';
+import { loadJSON, saveJSON, StorageKeys } from '@/lib/storage';
 import type { User } from '@/lib/types';
 
 interface AuthContextValue {
@@ -34,21 +35,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Ensure a profile row exists for this auth user (we have no auth.users
   // trigger, to avoid touching other apps in the same project), then return it.
+  // The resolved profile is cached so a previously-signed-in user can restore
+  // their session offline; if the network calls fail we fall back to that cache.
   const syncProfile = useCallback(async (sUser: SupabaseUser): Promise<User | null> => {
+    const cacheKey = `${StorageKeys.profile}.${sUser.id}`;
     const fallbackName = (sUser.user_metadata?.name as string | undefined) ?? sUser.email?.split('@')[0] ?? 'Me';
-    await supabase
-      .from(TABLES.profiles)
-      .upsert(
-        { id: sUser.id, email: sUser.email, name: fallbackName },
-        { onConflict: 'id', ignoreDuplicates: true },
-      );
-    const { data, error } = await supabase
-      .from(TABLES.profiles)
-      .select('id, email, name, partner_id')
-      .eq('id', sUser.id)
-      .single();
-    if (error || !data) return null;
-    return { id: data.id, email: data.email, name: data.name, partnerId: data.partner_id };
+    try {
+      await supabase
+        .from(TABLES.profiles)
+        .upsert(
+          { id: sUser.id, email: sUser.email, name: fallbackName },
+          { onConflict: 'id', ignoreDuplicates: true },
+        );
+      const { data, error } = await supabase
+        .from(TABLES.profiles)
+        .select('id, email, name, partner_id')
+        .eq('id', sUser.id)
+        .single();
+      if (error || !data) throw error ?? new Error('profile not found');
+      const profile: User = { id: data.id, email: data.email, name: data.name, partnerId: data.partner_id };
+      await saveJSON(cacheKey, profile);
+      return profile;
+    } catch {
+      // Offline (or a transient error): keep the user signed in using the last
+      // cached profile, or a minimal one built from the session itself.
+      const cached = await loadJSON<User | null>(cacheKey, null);
+      if (cached) return cached;
+      return { id: sUser.id, email: sUser.email ?? '', name: fallbackName, partnerId: null };
+    }
   }, []);
 
   // Restore any existing session, then react to future auth changes.

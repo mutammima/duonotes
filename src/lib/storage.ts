@@ -13,7 +13,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 
 export const StorageKeys = {
-  notes: 'duonotes.notes',
+  notes: 'duonotes.notes', // offline cache prefix — actual key is `${notes}.${userId}`
+  pending: 'duonotes.pending', // offline sync queue prefix — `${pending}.${userId}`
+  profile: 'duonotes.profile', // cached auth profile prefix — `${profile}.${userId}`
   users: 'duonotes.users',
   session: 'duonotes.session', // SecureStore
   pin: 'duonotes.pin', // SecureStore — JSON { salt, hash }

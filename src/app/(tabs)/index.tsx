@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { NoteList } from '@/components/note-list';
+import { SyncBanner } from '@/components/sync-banner';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
@@ -27,6 +28,8 @@ export default function NotesScreen() {
             {myNotes.length} {myNotes.length === 1 ? 'note' : 'notes'}
           </ThemedText>
         </View>
+
+        <SyncBanner />
 
         <NoteList notes={myNotes} emptyLabel={'No notes yet.\nTap the + button to write your first one.'} />
 
