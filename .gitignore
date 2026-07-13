@@ -45,3 +45,8 @@ example
 # generated native folders
 /ios
 /android
+
+# unsigned .ipa build artifacts (scripts/build-unsigned-ipa.sh)
+*.ipa
+/build
+/Payload
