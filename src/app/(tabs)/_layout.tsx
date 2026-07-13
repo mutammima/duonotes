@@ -1,0 +1,53 @@
+import { Ionicons } from '@expo/vector-icons';
+import { Tabs } from 'expo-router';
+
+import { useTheme } from '@/hooks/use-theme';
+
+/**
+ * We use Expo Router's cross-platform JS `Tabs` (rather than the iOS-only
+ * native tabs) so the app also runs in Expo Go on any device and on the web.
+ */
+export default function TabsLayout() {
+  const theme = useTheme();
+
+  return (
+    <Tabs
+      screenOptions={{
+        headerShown: false,
+        tabBarActiveTintColor: '#3c87f7',
+        tabBarInactiveTintColor: theme.textSecondary,
+        tabBarStyle: {
+          backgroundColor: theme.background,
+          borderTopColor: theme.backgroundSelected,
+        },
+      }}>
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: 'Notes',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="document-text-outline" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="shared"
+        options={{
+          title: 'Shared',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="heart-outline" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: 'Settings',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="settings-outline" size={size} color={color} />
+          ),
+        }}
+      />
+    </Tabs>
+  );
+}

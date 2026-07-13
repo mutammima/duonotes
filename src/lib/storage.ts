@@ -1,0 +1,53 @@
+/**
+ * Thin persistence layer.
+ *
+ *  - Non-secret data (notes, the current user profile) → AsyncStorage.
+ *  - Secrets (session token, PIN salt+hash) → SecureStore, which is backed by
+ *    the iOS Keychain / Android Keystore.
+ *
+ * Everything here is keyed by simple string constants so the whole app has a
+ * single, easy-to-audit list of what is stored where.
+ */
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
+
+export const StorageKeys = {
+  notes: 'duonotes.notes',
+  users: 'duonotes.users',
+  session: 'duonotes.session', // SecureStore
+  pin: 'duonotes.pin', // SecureStore — JSON { salt, hash }
+} as const;
+
+/* ------------------------------- AsyncStorage ------------------------------ */
+
+export async function loadJSON<T>(key: string, fallback: T): Promise<T> {
+  try {
+    const raw = await AsyncStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export async function saveJSON<T>(key: string, value: T): Promise<void> {
+  await AsyncStorage.setItem(key, JSON.stringify(value));
+}
+
+/* -------------------------------- SecureStore ------------------------------ */
+
+export async function loadSecret(key: string): Promise<string | null> {
+  try {
+    return await SecureStore.getItemAsync(key);
+  } catch {
+    return null;
+  }
+}
+
+export async function saveSecret(key: string, value: string): Promise<void> {
+  await SecureStore.setItemAsync(key, value);
+}
+
+export async function deleteSecret(key: string): Promise<void> {
+  await SecureStore.deleteItemAsync(key);
+}
