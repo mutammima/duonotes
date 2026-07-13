@@ -16,7 +16,10 @@
       "enabled": true,
       "checkAutomatically": "ON_LOAD",
       "fallbackToCacheTimeout": 0,
-      "url": "https://u.expo.dev/2dcbcf2a-aeaa-4b11-b573-b25e67e85ad9"
+      "url": "https://u.expo.dev/2dcbcf2a-aeaa-4b11-b573-b25e67e85ad9",
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      }
     },
     "ios": {
       "icon": "./assets/expo.icon",
