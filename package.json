@@ -46,7 +46,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "ota": "eas update --channel production"
   },
   "private": true
 }
