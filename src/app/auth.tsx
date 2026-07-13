@@ -26,20 +26,26 @@ export default function AuthScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const isSignup = mode === 'signup';
 
   async function submit() {
     setError(null);
+    setNotice(null);
     setBusy(true);
     try {
       if (isSignup) {
-        await signUp(name, email, password);
+        const { needsConfirmation } = await signUp(name, email, password);
+        if (needsConfirmation) {
+          setMode('signin');
+          setNotice('Account created! Check your email to confirm, then sign in.');
+        }
+        // Otherwise the root navigator's guard swaps us into the tabs.
       } else {
         await signIn(email, password);
       }
-      // On success the root navigator's guard swaps us into the tabs.
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong.');
     } finally {
@@ -90,6 +96,11 @@ export default function AuthScreen() {
               autoCapitalize="none"
             />
 
+            {notice && (
+              <ThemedText type="small" style={{ color: '#30A46C' }}>
+                {notice}
+              </ThemedText>
+            )}
             {error && (
               <ThemedText type="small" style={[styles.error, { color: '#E5484D' }]}>
                 {error}

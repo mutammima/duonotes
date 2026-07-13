@@ -4,8 +4,10 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useColorScheme } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
+import { ConfigNotice } from '@/components/config-notice';
 import { AuthProvider, useAuth } from '@/context/auth-context';
 import { NotesProvider } from '@/context/notes-context';
+import { isSupabaseConfigured } from '@/lib/supabase';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -43,12 +45,16 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <AuthProvider>
-          <NotesProvider>
-            <AnimatedSplashOverlay />
-            <RootNavigator />
-          </NotesProvider>
-        </AuthProvider>
+        <AnimatedSplashOverlay />
+        {isSupabaseConfigured ? (
+          <AuthProvider>
+            <NotesProvider>
+              <RootNavigator />
+            </NotesProvider>
+          </AuthProvider>
+        ) : (
+          <ConfigNotice />
+        )}
       </ThemeProvider>
     </GestureHandlerRootView>
   );

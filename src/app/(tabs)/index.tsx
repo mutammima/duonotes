@@ -15,7 +15,7 @@ export default function NotesScreen() {
 
   async function onCompose() {
     const note = await createNote();
-    router.push({ pathname: '/note/[id]', params: { id: note.id } });
+    if (note) router.push({ pathname: '/note/[id]', params: { id: note.id } });
   }
 
   return (

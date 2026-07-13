@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -32,7 +32,7 @@ export default function NoteEditorScreen() {
   const theme = useTheme();
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { getNote, updateNote, deleteNote, toggleShared, setLock } = useNotes();
+  const { getNote, updateNote, deleteNote, toggleShared, setLock, loading } = useNotes();
 
   const note = getNote(id);
 
@@ -44,17 +44,49 @@ export default function NoteEditorScreen() {
 
   const locked = note ? note.lockType !== 'none' : false;
 
-  // If the note was deleted out from under us, leave.
+  // If the note was deleted (or never existed), leave — but only once notes
+  // have finished loading, so we don't bounce during the initial fetch.
   useEffect(() => {
-    if (!note) router.back();
-  }, [note, router]);
+    if (!loading && !note) router.back();
+  }, [loading, note, router]);
+
+  // Sync local fields when a (different) note becomes available. Keyed on the
+  // id only, so realtime refreshes of the same note never clobber typing.
+  useEffect(() => {
+    if (note) {
+      setTitle(note.title);
+      setBody(note.body);
+      setUnlocked(note.lockType === 'none');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [note?.id]);
+
+  // Debounce writes so we don't hit the database on every keystroke.
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pending = useRef<{ title?: string; body?: string }>({});
+
+  const flush = useCallback(() => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    if (Object.keys(pending.current).length > 0) {
+      updateNote(id, pending.current);
+      pending.current = {};
+    }
+  }, [id, updateNote]);
 
   const persist = useCallback(
     (patch: { title?: string; body?: string }) => {
-      if (note) updateNote(note.id, patch);
+      pending.current = { ...pending.current, ...patch };
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      saveTimer.current = setTimeout(flush, 700);
     },
-    [note, updateNote],
+    [flush],
   );
+
+  // Flush any pending edit when leaving the screen.
+  useEffect(() => flush, [flush]);
 
   const tryBiometric = useCallback(async () => {
     const ok = await authenticateBiometric('Unlock this note');
@@ -152,7 +184,7 @@ export default function NoteEditorScreen() {
   };
 
   const lockIcon = note.lockType === 'biometric' ? 'finger-print' : 'lock-closed';
-  const isShared = note.sharedWith.length > 0;
+  const isShared = note.isShared;
 
   return (
     <ThemedView style={styles.container}>

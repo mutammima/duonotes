@@ -62,9 +62,7 @@ function NoteRow({ note }: { note: Note }) {
         </View>
       </View>
       <View style={styles.badges}>
-        {note.sharedWith.length > 0 && (
-          <Ionicons name="people" size={16} color={theme.textSecondary} />
-        )}
+        {note.isShared && <Ionicons name="people" size={16} color={theme.textSecondary} />}
         {locked && (
           <Ionicons
             name={note.lockType === 'biometric' ? 'finger-print' : 'lock-closed'}

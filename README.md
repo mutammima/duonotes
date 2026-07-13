@@ -17,15 +17,16 @@ note _and_ protect it with a **PIN** or **biometrics** (Face ID / Touch ID).
 | Area | Status | Notes |
 |------|--------|-------|
 | Tab navigation (Expo Router) | ✅ Working | Notes · Shared · Settings |
-| Email/password auth | ✅ Working (local) | Salted SHA-256, session in SecureStore |
-| Create / edit / delete notes | ✅ Working | iOS-Notes-style minimal editor |
-| Share a note with your partner | ⚠️ Simulated | UI + data model done; needs a sync backend |
+| Email/password auth | ✅ Working | Supabase Auth, session persists across launches |
+| Create / edit / delete notes | ✅ Working | iOS-Notes-style minimal editor, auto-saved |
+| Share a note with your partner | ✅ Working | Real-time sync via Supabase (link accounts by email) |
 | **PIN lock** | ✅ Working | One device PIN protects any PIN-locked note |
 | **Biometric lock** | ✅ Working | Face ID / Touch ID via `expo-local-authentication` |
-| At-rest note **encryption** | 🚧 Placeholder | Lock is a UI+keychain gate today; see the seam in `src/lib/crypto.ts` |
+| At-rest note **encryption** | 🚧 Placeholder | Lock is a UI + keychain gate today; see the seam in `src/lib/crypto.ts` |
 
-Please read **[What's real vs. placeholder](#-security-model--whats-real-vs-placeholder)**
-before trusting anything sensitive to it — the current build stores data on-device only.
+> **You must set up the Supabase backend once** (5 minutes, free) before notes will
+> sync — see **[Backend setup](#-backend-setup-supabase)**. Please also read
+> **[What's real vs. placeholder](#-security-model--whats-real-vs-placeholder)**.
 
 ---
 
@@ -34,10 +35,11 @@ before trusting anything sensitive to it — the current build stores data on-de
 - **Expo SDK 57** / **React Native 0.86** / **React 19**
 - **Expo Router** (file-based routing, `src/app/`)
 - **TypeScript** (strict)
+- **Supabase** — Postgres + Auth + Realtime (accounts, notes, live sharing)
 - `expo-local-authentication` — biometrics
-- `expo-secure-store` — Keychain / Keystore-backed secret storage (PIN, session)
-- `expo-crypto` — hashing & secure random
-- `@react-native-async-storage/async-storage` — note persistence
+- `expo-secure-store` — Keychain / Keystore-backed secret storage (PIN)
+- `expo-crypto` — PIN hashing & secure random
+- `@react-native-async-storage/async-storage` — Supabase session storage
 - **EAS Build** — cloud iOS/Android builds → `.ipa` / `.aab`
 
 ---
@@ -62,16 +64,54 @@ src/
 │   ├── themed-text.tsx       # Light/dark aware primitives (from template)
 │   └── themed-view.tsx
 ├── context/
-│   ├── auth-context.tsx      # Sign up / in / out, session restore
-│   └── notes-context.tsx     # Notes CRUD, sharing, lock state
+│   ├── auth-context.tsx      # Supabase auth: sign up/in/out, partner linking
+│   └── notes-context.tsx     # Notes CRUD + realtime sync via Supabase
 ├── lib/
+│   ├── supabase.ts           # Supabase client + env config
 │   ├── types.ts              # Note / User domain types
-│   ├── storage.ts            # AsyncStorage + SecureStore helpers
+│   ├── storage.ts            # SecureStore helpers (PIN)
 │   ├── security.ts           # PIN set/verify + biometric helpers
-│   └── crypto.ts             # Hashing + the encrypt/decrypt seam (TODO)
+│   └── crypto.ts             # PIN hashing + the encrypt/decrypt seam (TODO)
 ├── constants/theme.ts        # Colors, spacing, fonts
 └── hooks/                    # Color scheme / theme hooks
+
+supabase/
+└── schema.sql                # Tables + Row-Level Security — run once in Supabase
 ```
+
+---
+
+## 🗄️ Backend setup (Supabase)
+
+Do this **once**. It's free and takes about five minutes. Until it's done, the app
+shows a friendly "Almost there" screen instead of the notes UI.
+
+1. **Create a project** at [supabase.com](https://supabase.com) → *New project*
+   (pick any name/password; the free tier is plenty for two people).
+2. **Create the database.** In the Supabase dashboard: **SQL Editor → New query**,
+   paste the entire contents of [`supabase/schema.sql`](./supabase/schema.sql),
+   and click **Run**. This creates the tables, security rules, and realtime setup.
+3. **Turn off email confirmation** (optional but easiest for two people):
+   **Authentication → Sign In / Providers → Email → turn *Confirm email* off**.
+   Otherwise each of you must click a confirmation link before first sign-in.
+4. **Get your keys:** **Project Settings → Data API** — copy the **Project URL**
+   and the **anon / public** API key.
+5. **Add them to the app.** Copy `.env.example` to `.env` and fill in:
+   ```
+   EXPO_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
+   EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-public-key
+   ```
+   (The anon key is a public client key — safe to ship. Security is enforced by the
+   Row-Level Security policies, not by hiding the key.)
+6. **Restart** the dev server so Expo reloads `.env`.
+
+### Linking the two of you
+
+1. You both **sign up** in the app (each on your own phone).
+2. One of you opens **Settings → Partner → Link your partner** and enters the
+   other's email. That's it — you're connected both ways.
+3. Open a note, tap the **people** icon to **Share** it, and it appears on the
+   other phone in real time. Locked notes stay locked on both devices.
 
 ---
 
@@ -168,28 +208,31 @@ When the build finishes, EAS prints a URL. Download the `.ipa` from there (or th
 Being honest here matters more than sounding impressive:
 
 **Implemented today**
-- Passwords and PINs are **never stored in plaintext** — they're salted and
-  SHA-256 hashed (`src/lib/crypto.ts`).
-- The session token and PIN hash live in **SecureStore** (iOS Keychain /
-  Android Keystore).
-- Locked notes are **gated** in the UI: their contents aren't shown until you pass
-  a PIN or biometric challenge.
+- **Real accounts + sync.** Auth and notes run on **Supabase**; shared notes sync
+  between both phones in real time.
+- **Row-Level Security.** Postgres RLS policies (`supabase/schema.sql`) mean you can
+  only ever read your own notes and the ones your partner explicitly shares —
+  enforced by the database, not just the UI.
+- Passwords are handled by **Supabase Auth** (bcrypt-hashed server-side); the PIN is
+  salted + SHA-256 hashed on-device (`src/lib/crypto.ts`).
+- The PIN hash lives in **SecureStore** (iOS Keychain / Android Keystore); the auth
+  session in app storage.
+- Locked notes are **gated**: contents aren't shown until you pass a PIN or biometric
+  challenge, on each device.
 
-**Placeholders / not yet done (don't oversell these)**
-- **No backend.** Accounts and notes are stored **only on the device**. So the
-  "Share with partner" feature models the data (`sharedWith`) but the note won't
-  actually appear on the other phone until a sync backend is added
-  (e.g. Supabase, Firebase, or a small custom API). See `notes-context.tsx`.
-- **No at-rest encryption yet.** A locked note's body is gated but still stored in
-  the app sandbox in plaintext. `encryptBody` / `decryptBody` in `src/lib/crypto.ts`
-  are the seam where **AES-256-GCM with a PIN-derived key** should go.
+**Placeholder / not yet done (don't oversell this)**
+- **No at-rest encryption yet.** A locked note's body is gated in the UI but stored
+  as plaintext in the database (protected by RLS + your Supabase account, not by
+  encryption). `encryptBody` / `decryptBody` in `src/lib/crypto.ts` are the seam
+  where **AES-256-GCM with a PIN-derived key** (true end-to-end encryption) should go.
 
 ## 🗺️ Roadmap
 
-1. Real auth + sync backend so both iPhones share the same account and notes.
-2. AES-GCM field-level encryption of locked note bodies (key derived from PIN).
-3. Real-time collaboration on shared notes.
-4. Rich text / images / checklists.
+1. AES-GCM field-level **end-to-end encryption** of locked note bodies (key derived
+   from PIN, so not even the server can read them).
+2. Conflict-aware collaborative editing on shared notes (currently last-write-wins).
+3. Rich text / images / checklists.
+4. Push notifications when your partner shares or edits a note.
 
 ---
 

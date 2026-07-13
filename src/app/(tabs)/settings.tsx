@@ -1,6 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import {
+  Alert,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PinModal } from '@/components/pin-modal';
@@ -13,16 +23,35 @@ import { clearPin, getBiometricStatus, isPinSet, setPin, type BiometricStatus } 
 
 export default function SettingsScreen() {
   const theme = useTheme();
-  const { user, signOut } = useAuth();
+  const { user, signOut, linkPartner } = useAuth();
 
   const [pinSet, setPinSet] = useState(false);
   const [biometric, setBiometric] = useState<BiometricStatus | null>(null);
   const [showPinModal, setShowPinModal] = useState(false);
 
+  const [showLinkModal, setShowLinkModal] = useState(false);
+  const [partnerEmail, setPartnerEmail] = useState('');
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const [linking, setLinking] = useState(false);
+
   useEffect(() => {
     isPinSet().then(setPinSet);
     getBiometricStatus().then(setBiometric);
   }, []);
+
+  async function handleLinkPartner() {
+    setLinkError(null);
+    setLinking(true);
+    try {
+      await linkPartner(partnerEmail);
+      setShowLinkModal(false);
+      setPartnerEmail('');
+    } catch (e) {
+      setLinkError(e instanceof Error ? e.message : 'Could not link that account.');
+    } finally {
+      setLinking(false);
+    }
+  }
 
   async function handleSetPin(pin: string) {
     await setPin(pin);
@@ -57,6 +86,21 @@ export default function SettingsScreen() {
             <Row icon="person-circle-outline" label={user?.name ?? '—'} value={user?.email} />
           </Section>
 
+          <Section title="Partner">
+            {user?.partnerId ? (
+              <Row icon="heart" label="Linked with your partner" value="Shared notes will sync" />
+            ) : (
+              <Pressable onPress={() => setShowLinkModal(true)}>
+                <Row
+                  icon="person-add-outline"
+                  label="Link your partner"
+                  value="Connect by their email to share notes"
+                  chevron
+                />
+              </Pressable>
+            )}
+          </Section>
+
           <Section title="Security">
             <Pressable onPress={() => setShowPinModal(true)}>
               <Row
@@ -88,9 +132,9 @@ export default function SettingsScreen() {
 
           <Section title="About">
             <ThemedText type="small" themeColor="textSecondary" style={styles.about}>
-              DuoNotes is an early scaffold. Accounts and notes are stored only on this device
-              right now — cross-device sharing and at-rest encryption are on the roadmap (see the
-              project README).
+              Notes sync securely between you and your linked partner via Supabase. Your PIN and
+              biometrics stay on this device. At-rest encryption of locked notes is still on the
+              roadmap (see the project README).
             </ThemedText>
           </Section>
 
@@ -112,6 +156,69 @@ export default function SettingsScreen() {
         onSubmit={handleSetPin}
         onCancel={() => setShowPinModal(false)}
       />
+
+      <Modal
+        visible={showLinkModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowLinkModal(false)}>
+        <ThemedView style={styles.linkModal}>
+          <KeyboardAvoidingView
+            style={styles.flex}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <SafeAreaView style={styles.linkModalBody}>
+              <View style={styles.linkHeader}>
+                <Pressable onPress={() => setShowLinkModal(false)} hitSlop={12}>
+                  <ThemedText type="link" style={{ color: '#3c87f7' }}>
+                    Cancel
+                  </ThemedText>
+                </Pressable>
+              </View>
+
+              <Ionicons name="heart" size={40} color="#3c87f7" />
+              <ThemedText type="subtitle" style={styles.center}>
+                Link your partner
+              </ThemedText>
+              <ThemedText themeColor="textSecondary" style={styles.center}>
+                Enter the email your partner signed up with. Once linked, notes either of you shares
+                will appear for both.
+              </ThemedText>
+
+              <TextInput
+                value={partnerEmail}
+                onChangeText={setPartnerEmail}
+                placeholder="partner@example.com"
+                placeholderTextColor={theme.textSecondary}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={[
+                  styles.linkInput,
+                  { color: theme.text, backgroundColor: theme.backgroundElement },
+                ]}
+              />
+
+              {linkError && (
+                <ThemedText type="small" style={{ color: '#E5484D' }}>
+                  {linkError}
+                </ThemedText>
+              )}
+
+              <Pressable
+                onPress={handleLinkPartner}
+                disabled={linking || !partnerEmail.trim()}
+                style={({ pressed }) => [
+                  styles.linkButton,
+                  { opacity: pressed || linking || !partnerEmail.trim() ? 0.6 : 1 },
+                ]}>
+                <ThemedText style={styles.linkButtonText}>
+                  {linking ? 'Linking…' : 'Link partner'}
+                </ThemedText>
+              </Pressable>
+            </SafeAreaView>
+          </KeyboardAvoidingView>
+        </ThemedView>
+      </Modal>
     </ThemedView>
   );
 
@@ -181,4 +288,30 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.three,
     alignItems: 'center',
   },
+  flex: { flex: 1 },
+  linkModal: { flex: 1 },
+  linkModalBody: {
+    flex: 1,
+    paddingHorizontal: Spacing.four,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.three,
+  },
+  linkHeader: { position: 'absolute', top: Spacing.four, left: Spacing.four },
+  center: { textAlign: 'center' },
+  linkInput: {
+    alignSelf: 'stretch',
+    borderRadius: Spacing.three,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two + 2,
+    fontSize: 16,
+  },
+  linkButton: {
+    alignSelf: 'stretch',
+    backgroundColor: '#3c87f7',
+    borderRadius: Spacing.three,
+    paddingVertical: Spacing.three,
+    alignItems: 'center',
+  },
+  linkButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
 });

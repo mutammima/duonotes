@@ -1,10 +1,8 @@
 /**
  * Core domain types for DuoNotes.
  *
- * NOTE: This scaffold persists everything on-device (see `storage.ts`). The
- * `ownerId` / `sharedWith` fields model the *eventual* multi-user sync backend
- * (e.g. Supabase / Firebase / a custom API). Until that backend is wired up,
- * "sharing" is simulated locally. See README → "Roadmap & what is a placeholder".
+ * These mirror the Supabase tables defined in `supabase/schema.sql`
+ * (snake_case columns are mapped to camelCase in `notes-context.tsx`).
  */
 
 export type LockType = 'none' | 'pin' | 'biometric';
@@ -14,6 +12,8 @@ export interface User {
   email: string;
   /** Display name shown on shared notes, e.g. "Sam". */
   name: string;
+  /** The linked partner's user id, or null until accounts are linked. */
+  partnerId: string | null;
 }
 
 export interface Note {
@@ -24,12 +24,21 @@ export interface Note {
   updatedAt: number;
   /** User id of the note author. */
   ownerId: string;
-  /** User ids this note is shared with (the partner). */
-  sharedWith: string[];
-  /** How this note is protected. `'none'` means it opens without a challenge. */
+  /** Display name of the author (resolved from profiles) — used on shared notes. */
+  ownerName: string;
+  /** When true, the note is visible to the linked partner too. */
+  isShared: boolean;
+  /** How this note is protected. `'none'` opens without a challenge. */
   lockType: LockType;
 }
 
-export interface AuthSession {
-  user: User;
+/** A row from the `notes` table exactly as Supabase returns it. */
+export interface NoteRow {
+  id: string;
+  owner_id: string;
+  title: string;
+  body: string;
+  lock_type: LockType;
+  is_shared: boolean;
+  updated_at: string;
 }
