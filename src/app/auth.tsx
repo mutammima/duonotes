@@ -72,6 +72,7 @@ export default function AuthScreen() {
             {isSignup && (
               <Field
                 label="Name"
+                theme={theme}
                 value={name}
                 onChangeText={setName}
                 placeholder="e.g. Sam"
@@ -80,6 +81,7 @@ export default function AuthScreen() {
             )}
             <Field
               label="Email"
+              theme={theme}
               value={email}
               onChangeText={setEmail}
               placeholder="you@example.com"
@@ -89,6 +91,7 @@ export default function AuthScreen() {
             />
             <Field
               label="Password"
+              theme={theme}
               value={password}
               onChangeText={setPassword}
               placeholder="••••••••"
@@ -141,26 +144,33 @@ export default function AuthScreen() {
       </KeyboardAvoidingView>
     </ThemedView>
   );
+}
 
-  function Field(props: React.ComponentProps<typeof TextInput> & { label: string }) {
-    const { label, style, ...inputProps } = props;
-    return (
-      <ThemedView style={styles.fieldGroup}>
-        <ThemedText type="smallBold" themeColor="textSecondary">
-          {label}
-        </ThemedText>
-        <TextInput
-          placeholderTextColor={theme.textSecondary}
-          style={[
-            styles.input,
-            { color: theme.text, backgroundColor: theme.backgroundElement },
-            style,
-          ]}
-          {...inputProps}
-        />
-      </ThemedView>
-    );
-  }
+type FieldProps = React.ComponentProps<typeof TextInput> & {
+  label: string;
+  theme: ReturnType<typeof useTheme>;
+};
+
+// Defined at module scope so it keeps a stable identity across AuthScreen
+// re-renders. If this lived inside AuthScreen, every keystroke would remount
+// the TextInput and drop keyboard focus.
+function Field({ label, style, theme, ...inputProps }: FieldProps) {
+  return (
+    <ThemedView style={styles.fieldGroup}>
+      <ThemedText type="smallBold" themeColor="textSecondary">
+        {label}
+      </ThemedText>
+      <TextInput
+        placeholderTextColor={theme.textSecondary}
+        style={[
+          styles.input,
+          { color: theme.text, backgroundColor: theme.backgroundElement },
+          style,
+        ]}
+        {...inputProps}
+      />
+    </ThemedView>
+  );
 }
 
 const styles = StyleSheet.create({
