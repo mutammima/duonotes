@@ -7,12 +7,47 @@ import { AppState, Platform } from 'react-native';
 const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
+// Substrings that only ever appear in the placeholders shipped in
+// `.env.example` — never in a real Supabase project. If any of these survive
+// into a build it means the `.env` was never filled in, so we treat the app as
+// unconfigured rather than shipping a dead host to the sign-up screen.
+const PLACEHOLDER_MARKERS = ['your-project', 'your-anon', 'placeholder', 'example'];
+
+const looksLikePlaceholder = (value: string) =>
+  PLACEHOLDER_MARKERS.some((marker) => value.toLowerCase().includes(marker));
+
 /**
- * True once you've added EXPO_PUBLIC_SUPABASE_URL and
- * EXPO_PUBLIC_SUPABASE_ANON_KEY to your `.env` (see `.env.example`). The app
- * shows a friendly setup screen until this is true instead of crashing.
+ * A real Supabase project URL is an `https://` URL whose host resolves (e.g.
+ * `https://abcd1234.supabase.co`). We reject anything that isn't a parseable
+ * https URL or that still contains an `.env.example` placeholder, so a bad
+ * `.env` shows the "Almost there" setup screen instead of failing with a
+ * "can't find host" error on the first network call.
  */
-export const isSupabaseConfigured = Boolean(url && anonKey);
+const isValidSupabaseUrl = (value: string | undefined): value is string => {
+  if (!value || looksLikePlaceholder(value)) return false;
+  try {
+    const parsed = new URL(value);
+    // Must be https and have a real dotted hostname (not `localhost`, not empty).
+    return parsed.protocol === 'https:' && parsed.hostname.includes('.');
+  } catch {
+    return false;
+  }
+};
+
+const isValidAnonKey = (value: string | undefined): value is string => {
+  if (!value) return false;
+  const trimmed = value.trim();
+  // Real anon / publishable keys are long opaque tokens; the placeholder is short.
+  return trimmed.length >= 20 && !looksLikePlaceholder(trimmed);
+};
+
+/**
+ * True once you've added a real EXPO_PUBLIC_SUPABASE_URL and
+ * EXPO_PUBLIC_SUPABASE_ANON_KEY to your `.env` (see `.env.example`). Placeholder
+ * or malformed values count as unconfigured. The app shows a friendly setup
+ * screen until this is true instead of crashing.
+ */
+export const isSupabaseConfigured = isValidSupabaseUrl(url) && isValidAnonKey(anonKey);
 
 // DuoNotes tables live in the `public` schema but are prefixed with `duonotes_`
 // so this app can share a Supabase project with other apps without colliding.
