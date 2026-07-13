@@ -22,7 +22,8 @@ export default function SharedScreen() {
 
         <NoteList
           notes={sharedNotes}
-          emptyLabel={'Nothing shared yet.\nOpen a note and tap Share to add it here.'}
+          emptyIcon="heart-outline"
+          emptyLabel={'Nothing shared yet 💕\nOpen a note and tap the people icon to share it.'}
         />
       </SafeAreaView>
     </ThemedView>

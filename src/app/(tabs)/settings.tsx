@@ -16,7 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { PinModal } from '@/components/pin-modal';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Spacing } from '@/constants/theme';
+import { ACCENT_LABELS, ACCENTS, type AccentKey, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { type ThemePreference, useThemePreference } from '@/context/theme-context';
 import { useTheme } from '@/hooks/use-theme';
@@ -25,7 +25,7 @@ import { clearPin, getBiometricStatus, isPinSet, setPin, type BiometricStatus } 
 export default function SettingsScreen() {
   const theme = useTheme();
   const { user, signOut, linkPartner } = useAuth();
-  const { preference, setPreference } = useThemePreference();
+  const { preference, setPreference, accent, setAccent } = useThemePreference();
 
   const [pinSet, setPinSet] = useState(false);
   const [biometric, setBiometric] = useState<BiometricStatus | null>(null);
@@ -126,6 +126,26 @@ export default function SettingsScreen() {
                 );
               })}
             </View>
+            <View style={[styles.swatchDivider, { backgroundColor: theme.background }]} />
+            <View style={styles.swatchRow}>
+              {(Object.keys(ACCENTS) as AccentKey[]).map((key) => {
+                const active = accent === key;
+                return (
+                  <Pressable key={key} onPress={() => setAccent(key)} style={styles.swatchWrap}>
+                    <View
+                      style={[
+                        styles.swatch,
+                        { backgroundColor: ACCENTS[key], borderColor: active ? theme.text : 'transparent' },
+                      ]}>
+                      {active && <Ionicons name="checkmark" size={18} color="#fff" />}
+                    </View>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {ACCENT_LABELS[key]}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
+            </View>
           </Section>
 
           <Section title="Security">
@@ -196,13 +216,13 @@ export default function SettingsScreen() {
             <SafeAreaView style={styles.linkModalBody}>
               <View style={styles.linkHeader}>
                 <Pressable onPress={() => setShowLinkModal(false)} hitSlop={12}>
-                  <ThemedText type="link" style={{ color: '#3c87f7' }}>
+                  <ThemedText type="link" style={{ color: theme.accent }}>
                     Cancel
                   </ThemedText>
                 </Pressable>
               </View>
 
-              <Ionicons name="heart" size={40} color="#3c87f7" />
+              <Ionicons name="heart" size={40} color={theme.accent} />
               <ThemedText type="subtitle" style={styles.center}>
                 Link your partner
               </ThemedText>
@@ -236,7 +256,7 @@ export default function SettingsScreen() {
                 disabled={linking || !partnerEmail.trim()}
                 style={({ pressed }) => [
                   styles.linkButton,
-                  { opacity: pressed || linking || !partnerEmail.trim() ? 0.6 : 1 },
+                  { backgroundColor: theme.accent, opacity: pressed || linking || !partnerEmail.trim() ? 0.6 : 1 },
                 ]}>
                 <ThemedText style={styles.linkButtonText}>
                   {linking ? 'Linking…' : 'Link partner'}
@@ -311,6 +331,22 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
     borderRadius: Spacing.two,
   },
+  swatchDivider: { height: StyleSheet.hairlineWidth, marginHorizontal: Spacing.three },
+  swatchRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingVertical: Spacing.three,
+    paddingHorizontal: Spacing.two,
+  },
+  swatchWrap: { alignItems: 'center', gap: Spacing.one },
+  swatch: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2.5,
+  },
   content: { padding: Spacing.four, gap: Spacing.four, paddingBottom: Spacing.six },
   title: { marginBottom: Spacing.one },
   section: { gap: Spacing.two },
@@ -351,7 +387,6 @@ const styles = StyleSheet.create({
   },
   linkButton: {
     alignSelf: 'stretch',
-    backgroundColor: '#3c87f7',
     borderRadius: Spacing.three,
     paddingVertical: Spacing.three,
     alignItems: 'center',

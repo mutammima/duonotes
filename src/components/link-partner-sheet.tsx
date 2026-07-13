@@ -87,7 +87,7 @@ export function LinkPartnerSheet({
                 disabled={busy || !email.trim()}
                 style={({ pressed }) => [
                   styles.button,
-                  { backgroundColor: '#3c87f7', opacity: pressed || busy || !email.trim() ? 0.6 : 1 },
+                  { backgroundColor: theme.accent, opacity: pressed || busy || !email.trim() ? 0.6 : 1 },
                 ]}>
                 <ThemedText style={styles.buttonText}>{busy ? 'Linking…' : 'Link partner'}</ThemedText>
               </Pressable>

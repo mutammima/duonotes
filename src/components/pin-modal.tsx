@@ -78,7 +78,7 @@ export function PinModal({ visible, mode, title, onSubmit, onCancel }: PinModalP
       <ThemedView style={styles.container}>
         <View style={styles.top}>
           <Pressable onPress={onCancel} hitSlop={12} style={styles.cancel}>
-            <ThemedText type="link" style={{ color: '#3c87f7' }}>
+            <ThemedText type="link" style={{ color: theme.accent }}>
               Cancel
             </ThemedText>
           </Pressable>
@@ -98,7 +98,7 @@ export function PinModal({ visible, mode, title, onSubmit, onCancel }: PinModalP
                 style={[
                   styles.dot,
                   { borderColor: theme.textSecondary },
-                  i < entry.length && { backgroundColor: '#3c87f7', borderColor: '#3c87f7' },
+                  i < entry.length && { backgroundColor: theme.accent, borderColor: theme.accent },
                 ]}
               />
             ))}

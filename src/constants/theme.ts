@@ -1,6 +1,6 @@
 /**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
+ * Color tokens for light and dark mode, plus the selectable accent palettes.
+ * Neutrals are gently warmed for a friendlier, less clinical feel.
  */
 
 import '@/global.css';
@@ -9,32 +9,54 @@ import { Platform } from 'react-native';
 
 export const Colors = {
   light: {
-    text: '#000000',
-    background: '#ffffff',
-    backgroundElement: '#F0F0F3',
-    backgroundSelected: '#E0E1E6',
-    textSecondary: '#60646C',
+    text: '#1A1618',
+    background: '#FFFCFB',
+    backgroundElement: '#F6F1EF',
+    backgroundSelected: '#ECE4E1',
+    textSecondary: '#6B646A',
   },
   dark: {
-    text: '#ffffff',
-    background: '#000000',
-    backgroundElement: '#212225',
-    backgroundSelected: '#2E3135',
-    textSecondary: '#B0B4BA',
+    text: '#FBF7F6',
+    background: '#0E0C0D',
+    backgroundElement: '#1E1A1C',
+    backgroundSelected: '#2B2528',
+    textSecondary: '#B4ABAF',
   },
 } as const;
 
 export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
 
+/** Selectable accent palettes (chosen in Settings → Appearance). */
+export const ACCENTS = {
+  rose: '#E6488E',
+  coral: '#FB7185',
+  lavender: '#9B7EDE',
+  blue: '#3C87F7',
+} as const;
+
+export type AccentKey = keyof typeof ACCENTS;
+
+export const ACCENT_LABELS: Record<AccentKey, string> = {
+  rose: 'Rose',
+  coral: 'Coral',
+  lavender: 'Lavender',
+  blue: 'Blue',
+};
+
+/** Translucent tint of a hex color — used for soft accent backgrounds/badges. */
+export function hexToRgba(hex: string, alpha: number): string {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 export const Fonts = Platform.select({
   ios: {
-    /** iOS `UIFontDescriptorSystemDesignDefault` */
     sans: 'system-ui',
-    /** iOS `UIFontDescriptorSystemDesignSerif` */
     serif: 'ui-serif',
-    /** iOS `UIFontDescriptorSystemDesignRounded` */
     rounded: 'ui-rounded',
-    /** iOS `UIFontDescriptorSystemDesignMonospaced` */
     mono: 'ui-monospace',
   },
   default: {
