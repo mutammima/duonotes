@@ -13,10 +13,14 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { FormatToolbar } from '@/components/format-toolbar';
+import { LinkPartnerSheet } from '@/components/link-partner-sheet';
+import { MarkdownView } from '@/components/markdown-view';
 import { PinModal } from '@/components/pin-modal';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
+import { useAuth } from '@/context/auth-context';
 import { useNotes } from '@/context/notes-context';
 import { useTheme } from '@/hooks/use-theme';
 import {
@@ -26,6 +30,7 @@ import {
   setPin,
   verifyPin,
 } from '@/lib/security';
+import { type Edit, toggleCheckboxLine } from '@/lib/markdown';
 import type { LockType } from '@/lib/types';
 
 export default function NoteEditorScreen() {
@@ -33,6 +38,7 @@ export default function NoteEditorScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { getNote, updateNote, deleteNote, toggleShared, setLock, loading } = useNotes();
+  const { user } = useAuth();
 
   const note = getNote(id);
 
@@ -41,6 +47,14 @@ export default function NoteEditorScreen() {
   const [unlocked, setUnlocked] = useState(note ? note.lockType === 'none' : true);
   // `pinTask` drives the shared PinModal for either unlocking or enabling a PIN.
   const [pinTask, setPinTask] = useState<'unlock' | 'enable' | null>(null);
+  // Rendered (formatted) vs. raw-Markdown editing.
+  const [preview, setPreview] = useState(false);
+  // Live selection for the formatting toolbar; `caret` is a one-shot controlled
+  // selection used only to reposition the cursor right after a toolbar edit.
+  const [selection, setSelection] = useState({ start: 0, end: 0 });
+  const [caret, setCaret] = useState<{ start: number; end: number } | undefined>(undefined);
+  // Invite/link-partner sheet, opened when you share without a partner linked.
+  const [showLink, setShowLink] = useState(false);
 
   const locked = note ? note.lockType !== 'none' : false;
 
@@ -105,6 +119,31 @@ export default function NoteEditorScreen() {
   // hoisted `function` declarations) so the narrowing flows into their closures.
   if (!note) return null;
   const activeNote = note;
+
+  const changeBody = (t: string) => {
+    setBody(t);
+    persist({ body: t });
+  };
+
+  // Apply a formatting-toolbar edit, then drop the caret where it belongs.
+  const onApplyFormat = (edit: Edit) => {
+    changeBody(edit.text);
+    setSelection({ start: edit.cursor, end: edit.cursor });
+    setCaret({ start: edit.cursor, end: edit.cursor });
+  };
+
+  // Tapping a checkbox in preview flips its source line.
+  const onToggleCheck = (lineIndex: number) => changeBody(toggleCheckboxLine(body, lineIndex));
+
+  // The people icon: if there's no partner yet, invite one first; otherwise
+  // just toggle sharing.
+  const onSharePress = () => {
+    if (!activeNote.isShared && !user?.partnerId) {
+      setShowLink(true);
+      return;
+    }
+    toggleShared(activeNote.id);
+  };
 
   const applyLock = async (type: LockType) => {
     await setLock(activeNote.id, type);
@@ -199,10 +238,17 @@ export default function NoteEditorScreen() {
           </Pressable>
 
           <View style={styles.headerRight}>
+            {!(locked && !unlocked) && (
+              <HeaderIcon
+                name={preview ? 'create-outline' : 'eye-outline'}
+                active={preview}
+                onPress={() => setPreview((p) => !p)}
+              />
+            )}
             <HeaderIcon
               name={isShared ? 'people' : 'people-outline'}
               active={isShared}
-              onPress={() => toggleShared(note.id)}
+              onPress={onSharePress}
             />
             <HeaderIcon
               name={locked ? lockIcon : 'lock-open-outline'}
@@ -224,17 +270,21 @@ export default function NoteEditorScreen() {
             style={styles.flex}
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
             <ScrollView contentContainerStyle={styles.editor} keyboardShouldPersistTaps="handled">
-              <TextInput
-                value={title}
-                onChangeText={(t) => {
-                  setTitle(t);
-                  persist({ title: t });
-                }}
-                placeholder="Title"
-                placeholderTextColor={theme.textSecondary}
-                style={[styles.titleInput, { color: theme.text }]}
-                multiline
-              />
+              {preview ? (
+                <ThemedText style={styles.titleInput}>{title.trim() || 'Untitled'}</ThemedText>
+              ) : (
+                <TextInput
+                  value={title}
+                  onChangeText={(t) => {
+                    setTitle(t);
+                    persist({ title: t });
+                  }}
+                  placeholder="Title"
+                  placeholderTextColor={theme.textSecondary}
+                  style={[styles.titleInput, { color: theme.text }]}
+                  multiline
+                />
+              )}
               {isShared && (
                 <View style={styles.sharedBanner}>
                   <Ionicons name="people" size={14} color={theme.textSecondary} />
@@ -243,19 +293,26 @@ export default function NoteEditorScreen() {
                   </ThemedText>
                 </View>
               )}
-              <TextInput
-                value={body}
-                onChangeText={(t) => {
-                  setBody(t);
-                  persist({ body: t });
-                }}
-                placeholder="Start writing…"
-                placeholderTextColor={theme.textSecondary}
-                style={[styles.bodyInput, { color: theme.text }]}
-                multiline
-                textAlignVertical="top"
-              />
+              {preview ? (
+                <MarkdownView value={body} onToggleCheck={onToggleCheck} />
+              ) : (
+                <TextInput
+                  value={body}
+                  onChangeText={changeBody}
+                  selection={caret}
+                  onSelectionChange={(e) => {
+                    setSelection(e.nativeEvent.selection);
+                    if (caret) setCaret(undefined);
+                  }}
+                  placeholder="Start writing…"
+                  placeholderTextColor={theme.textSecondary}
+                  style={[styles.bodyInput, { color: theme.text }]}
+                  multiline
+                  textAlignVertical="top"
+                />
+              )}
             </ScrollView>
+            {!preview && <FormatToolbar value={body} selection={selection} onApply={onApplyFormat} />}
           </KeyboardAvoidingView>
         )}
       </SafeAreaView>
@@ -266,6 +323,15 @@ export default function NoteEditorScreen() {
         title={pinTask === 'enable' ? 'Set a PIN' : 'Enter your PIN'}
         onSubmit={onPinModalSubmit}
         onCancel={() => setPinTask(null)}
+      />
+
+      <LinkPartnerSheet
+        visible={showLink}
+        onClose={() => setShowLink(false)}
+        onLinked={() => {
+          if (!activeNote.isShared) toggleShared(activeNote.id);
+        }}
+        reason="Link your partner to share this note. Enter the email they signed up with — once linked, this note syncs to their phone."
       />
     </ThemedView>
   );
