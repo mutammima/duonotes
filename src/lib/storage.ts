@@ -18,6 +18,7 @@ export const StorageKeys = {
   profile: 'duonotes.profile', // cached auth profile prefix — `${profile}.${userId}`
   users: 'duonotes.users',
   themePreference: 'duonotes.themePreference', // 'light' | 'dark' | 'system'
+  accentPreference: 'duonotes.accentPreference', // 'rose' | 'coral' | 'lavender' | 'blue'
   session: 'duonotes.session', // SecureStore
   pin: 'duonotes.pin', // SecureStore — JSON { salt, hash }
 } as const;

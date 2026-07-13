@@ -8,11 +8,17 @@ import { SyncBanner } from '@/components/sync-banner';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
+import { useAuth } from '@/context/auth-context';
 import { useNotes } from '@/context/notes-context';
+import { useTheme } from '@/hooks/use-theme';
 
 export default function NotesScreen() {
   const router = useRouter();
+  const theme = useTheme();
+  const { user } = useAuth();
   const { myNotes, createNote } = useNotes();
+
+  const firstName = (user?.name ?? '').trim().split(' ')[0];
 
   async function onCompose() {
     const note = await createNote();
@@ -23,19 +29,28 @@ export default function NotesScreen() {
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
         <View style={styles.header}>
-          <ThemedText type="subtitle">Notes</ThemedText>
+          <ThemedText type="subtitle">{firstName ? `Hi ${firstName} 💞` : 'Your notes'}</ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
-            {myNotes.length} {myNotes.length === 1 ? 'note' : 'notes'}
+            {myNotes.length === 0
+              ? 'A cozy place for the two of you'
+              : `${myNotes.length} ${myNotes.length === 1 ? 'note' : 'notes'}`}
           </ThemedText>
         </View>
 
         <SyncBanner />
 
-        <NoteList notes={myNotes} emptyLabel={'No notes yet.\nTap the + button to write your first one.'} />
+        <NoteList
+          notes={myNotes}
+          emptyIcon="heart-outline"
+          emptyLabel={'No notes yet 💌\nTap the + to write your first one together.'}
+        />
 
         <Pressable
           onPress={onCompose}
-          style={({ pressed }) => [styles.fab, { opacity: pressed ? 0.8 : 1 }]}>
+          style={({ pressed }) => [
+            styles.fab,
+            { backgroundColor: theme.accent, shadowColor: theme.accent, opacity: pressed ? 0.85 : 1 },
+          ]}>
           <Ionicons name="create-outline" size={26} color="#fff" />
         </Pressable>
       </SafeAreaView>
@@ -56,16 +71,14 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: Spacing.four,
     bottom: Spacing.four,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#3c87f7',
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 5 },
     elevation: 6,
   },
 });

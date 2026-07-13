@@ -9,13 +9,23 @@ import { useTheme } from '@/hooks/use-theme';
 import { stripMarkdown } from '@/lib/markdown';
 import type { Note } from '@/lib/types';
 
-export function NoteList({ notes, emptyLabel }: { notes: Note[]; emptyLabel: string }) {
+export function NoteList({
+  notes,
+  emptyLabel,
+  emptyIcon = 'document-text-outline',
+}: {
+  notes: Note[];
+  emptyLabel: string;
+  emptyIcon?: keyof typeof Ionicons.glyphMap;
+}) {
   const theme = useTheme();
 
   if (notes.length === 0) {
     return (
       <ThemedView style={styles.empty}>
-        <Ionicons name="document-text-outline" size={40} color={theme.textSecondary} />
+        <View style={[styles.emptyBadge, { backgroundColor: theme.accentSoft }]}>
+          <Ionicons name={emptyIcon} size={34} color={theme.accent} />
+        </View>
         <ThemedText themeColor="textSecondary" style={styles.emptyText}>
           {emptyLabel}
         </ThemedText>
@@ -68,7 +78,7 @@ function NoteRow({ note }: { note: Note }) {
           <Ionicons
             name={note.lockType === 'biometric' ? 'finger-print' : 'lock-closed'}
             size={16}
-            color="#3c87f7"
+            color={theme.accent}
           />
         )}
       </View>
@@ -102,6 +112,7 @@ const styles = StyleSheet.create({
   rowSubtitle: { flexDirection: 'row', gap: Spacing.two },
   preview: { flexShrink: 1 },
   badges: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
-  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.two, padding: Spacing.four },
-  emptyText: { textAlign: 'center' },
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.three, padding: Spacing.four },
+  emptyBadge: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center' },
+  emptyText: { textAlign: 'center', lineHeight: 22 },
 });

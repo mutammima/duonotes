@@ -34,7 +34,7 @@ export function MarkdownView({
               <Ionicons
                 name={done ? 'checkbox' : 'square-outline'}
                 size={20}
-                color={done ? '#3c87f7' : theme.textSecondary}
+                color={done ? theme.accent : theme.textSecondary}
                 style={styles.checkIcon}
               />
               <Text style={[styles.body, { color: done ? theme.textSecondary : theme.text }, done && styles.strike]}>

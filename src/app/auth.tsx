@@ -115,7 +115,7 @@ export default function AuthScreen() {
               disabled={busy}
               style={({ pressed }) => [
                 styles.primaryButton,
-                { backgroundColor: '#3c87f7', opacity: pressed || busy ? 0.7 : 1 },
+                { backgroundColor: theme.accent, opacity: pressed || busy ? 0.7 : 1 },
               ]}>
               {busy ? (
                 <ActivityIndicator color="#fff" />
@@ -134,7 +134,7 @@ export default function AuthScreen() {
               style={styles.switchButton}>
               <ThemedText type="small" themeColor="textSecondary">
                 {isSignup ? 'Already have an account? ' : "Don't have an account? "}
-                <ThemedText type="smallBold" style={{ color: '#3c87f7' }}>
+                <ThemedText type="smallBold" style={{ color: theme.accent }}>
                   {isSignup ? 'Sign in' : 'Sign up'}
                 </ThemedText>
               </ThemedText>

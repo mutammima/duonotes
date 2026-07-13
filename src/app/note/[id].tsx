@@ -3,6 +3,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -50,8 +51,11 @@ export default function NoteEditorScreen() {
   const [unlocked, setUnlocked] = useState(note ? note.lockType === 'none' : true);
   // `pinTask` drives the shared PinModal for either unlocking or enabling a PIN.
   const [pinTask, setPinTask] = useState<'unlock' | 'enable' | null>(null);
-  // Formatted preview vs. raw-Markdown editing.
-  const [preview, setPreview] = useState(false);
+  // Notes open showing their formatted view; an empty (new) note opens straight
+  // into editing so you can just start typing. Tapping the note edits it, and
+  // dismissing the keyboard flips back to the formatted view automatically.
+  const [preview, setPreview] = useState((note?.body ?? '').trim().length > 0);
+  const bodyInputRef = useRef<TextInput>(null);
   // Live selection for the formatting toolbar; `caret` is a one-shot controlled
   // selection used only to reposition the cursor right after a toolbar edit.
   const [selection, setSelection] = useState({ start: 0, end: 0 });
@@ -105,6 +109,12 @@ export default function NoteEditorScreen() {
   // Flush any pending edit when leaving the screen.
   useEffect(() => flush, [flush]);
 
+  // Dismissing the keyboard returns the note to its formatted view.
+  useEffect(() => {
+    const sub = Keyboard.addListener('keyboardDidHide', () => setPreview(true));
+    return () => sub.remove();
+  }, []);
+
   const tryBiometric = useCallback(async () => {
     const ok = await authenticateBiometric('Unlock this note');
     if (ok) setUnlocked(true);
@@ -128,11 +138,13 @@ export default function NoteEditorScreen() {
     persist({ body: t });
   };
 
-  // Apply a formatting-toolbar edit, then drop the caret where it belongs.
+  // Apply a formatting-toolbar edit, then drop the caret where it belongs and
+  // keep focus so the keyboard (and edit mode) stays put.
   const onApplyFormat = (edit: Edit) => {
     changeBody(edit.text);
     setSelection({ start: edit.cursor, end: edit.cursor });
     setCaret({ start: edit.cursor, end: edit.cursor });
+    bodyInputRef.current?.focus();
   };
 
   // Tapping a checkbox in the formatted preview flips its source line.
@@ -234,8 +246,8 @@ export default function NoteEditorScreen() {
         {/* Header */}
         <View style={styles.header}>
           <Pressable onPress={() => router.back()} hitSlop={10} style={styles.headerLeft}>
-            <Ionicons name="chevron-back" size={24} color="#3c87f7" />
-            <ThemedText type="link" style={{ color: '#3c87f7' }}>
+            <Ionicons name="chevron-back" size={24} color={theme.accent} />
+            <ThemedText type="link" style={{ color: theme.accent }}>
               Notes
             </ThemedText>
           </Pressable>
@@ -292,21 +304,23 @@ export default function NoteEditorScreen() {
               )}
               {isShared && (
                 <View style={styles.sharedBanner}>
-                  <Ionicons name="people" size={14} color={theme.textSecondary} />
+                  <Ionicons name="heart" size={14} color={theme.accent} />
                   <ThemedText type="small" themeColor="textSecondary">
                     Shared with your partner
                   </ThemedText>
                 </View>
               )}
               {preview ? (
-                <View style={styles.paper}>
+                <Pressable onPress={() => setPreview(false)} style={styles.paper}>
                   <RuledLines color={theme.backgroundSelected} />
                   <MarkdownView value={body} onToggleCheck={onToggleCheck} />
-                </View>
+                </Pressable>
               ) : (
                 <View style={styles.paper}>
                   <RuledLines color={theme.backgroundSelected} />
                   <TextInput
+                    ref={bodyInputRef}
+                    autoFocus
                     value={body}
                     onChangeText={changeBody}
                     selection={caret}
@@ -357,7 +371,7 @@ export default function NoteEditorScreen() {
   }) {
     return (
       <Pressable onPress={onPress} hitSlop={8} style={styles.headerIcon}>
-        <Ionicons name={name} size={22} color={active ? '#3c87f7' : theme.text} />
+        <Ionicons name={name} size={22} color={active ? theme.accent : theme.text} />
       </Pressable>
     );
   }
@@ -392,7 +406,7 @@ function LockGate({ lockType, onUnlock }: { lockType: LockType; onUnlock: () => 
       </ThemedText>
       <Pressable
         onPress={onUnlock}
-        style={({ pressed }) => [styles.unlockButton, { opacity: pressed ? 0.8 : 1 }]}>
+        style={({ pressed }) => [styles.unlockButton, { backgroundColor: theme.accent, opacity: pressed ? 0.8 : 1 }]}>
         <Ionicons name={isBio ? 'finger-print' : 'keypad'} size={20} color="#fff" />
         <ThemedText style={styles.unlockText}>Unlock</ThemedText>
       </Pressable>
@@ -426,7 +440,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.one,
-    backgroundColor: '#3c87f7',
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.two + 2,
     borderRadius: Spacing.three,
