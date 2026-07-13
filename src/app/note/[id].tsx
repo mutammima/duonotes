@@ -13,9 +13,14 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import {
+  MarkdownTextInput,
+  type MarkdownStyle,
+  parseExpensiMark,
+} from '@expensify/react-native-live-markdown';
+
 import { FormatToolbar } from '@/components/format-toolbar';
 import { LinkPartnerSheet } from '@/components/link-partner-sheet';
-import { MarkdownView } from '@/components/markdown-view';
 import { PinModal } from '@/components/pin-modal';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -30,8 +35,11 @@ import {
   setPin,
   verifyPin,
 } from '@/lib/security';
-import { type Edit, toggleCheckboxLine } from '@/lib/markdown';
+import { type Edit } from '@/lib/markdown';
 import type { LockType } from '@/lib/types';
+
+/** Body line height, shared by the text and the ruled-paper background lines. */
+const LINE_HEIGHT = 26;
 
 export default function NoteEditorScreen() {
   const theme = useTheme();
@@ -47,8 +55,6 @@ export default function NoteEditorScreen() {
   const [unlocked, setUnlocked] = useState(note ? note.lockType === 'none' : true);
   // `pinTask` drives the shared PinModal for either unlocking or enabling a PIN.
   const [pinTask, setPinTask] = useState<'unlock' | 'enable' | null>(null);
-  // Rendered (formatted) vs. raw-Markdown editing.
-  const [preview, setPreview] = useState(false);
   // Live selection for the formatting toolbar; `caret` is a one-shot controlled
   // selection used only to reposition the cursor right after a toolbar edit.
   const [selection, setSelection] = useState({ start: 0, end: 0 });
@@ -131,9 +137,6 @@ export default function NoteEditorScreen() {
     setSelection({ start: edit.cursor, end: edit.cursor });
     setCaret({ start: edit.cursor, end: edit.cursor });
   };
-
-  // Tapping a checkbox in preview flips its source line.
-  const onToggleCheck = (lineIndex: number) => changeBody(toggleCheckboxLine(body, lineIndex));
 
   // The people icon: if there's no partner yet, invite one first; otherwise
   // just toggle sharing.
@@ -222,6 +225,23 @@ export default function NoteEditorScreen() {
     return false;
   };
 
+  // Live-formatting styles: dim the syntax marks, enlarge headings, style code.
+  const mdStyle: MarkdownStyle = {
+    syntax: { color: theme.textSecondary },
+    h1: { fontSize: 24 },
+    link: { color: '#3c87f7' },
+    code: {
+      color: theme.text,
+      backgroundColor: theme.backgroundElement,
+    },
+    blockquote: {
+      borderColor: theme.backgroundSelected,
+      borderWidth: 4,
+      marginLeft: 6,
+      paddingLeft: 8,
+    },
+  };
+
   const lockIcon = note.lockType === 'biometric' ? 'finger-print' : 'lock-closed';
   const isShared = note.isShared;
 
@@ -238,13 +258,6 @@ export default function NoteEditorScreen() {
           </Pressable>
 
           <View style={styles.headerRight}>
-            {!(locked && !unlocked) && (
-              <HeaderIcon
-                name={preview ? 'create-outline' : 'eye-outline'}
-                active={preview}
-                onPress={() => setPreview((p) => !p)}
-              />
-            )}
             <HeaderIcon
               name={isShared ? 'people' : 'people-outline'}
               active={isShared}
@@ -269,22 +282,20 @@ export default function NoteEditorScreen() {
           <KeyboardAvoidingView
             style={styles.flex}
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            {/* Toolbar pinned at the top so the keyboard never covers it. */}
+            <FormatToolbar value={body} selection={selection} onApply={onApplyFormat} />
             <ScrollView contentContainerStyle={styles.editor} keyboardShouldPersistTaps="handled">
-              {preview ? (
-                <ThemedText style={styles.titleInput}>{title.trim() || 'Untitled'}</ThemedText>
-              ) : (
-                <TextInput
-                  value={title}
-                  onChangeText={(t) => {
-                    setTitle(t);
-                    persist({ title: t });
-                  }}
-                  placeholder="Title"
-                  placeholderTextColor={theme.textSecondary}
-                  style={[styles.titleInput, { color: theme.text }]}
-                  multiline
-                />
-              )}
+              <TextInput
+                value={title}
+                onChangeText={(t) => {
+                  setTitle(t);
+                  persist({ title: t });
+                }}
+                placeholder="Title"
+                placeholderTextColor={theme.textSecondary}
+                style={[styles.titleInput, { color: theme.text }]}
+                multiline
+              />
               {isShared && (
                 <View style={styles.sharedBanner}>
                   <Ionicons name="people" size={14} color={theme.textSecondary} />
@@ -293,12 +304,13 @@ export default function NoteEditorScreen() {
                   </ThemedText>
                 </View>
               )}
-              {preview ? (
-                <MarkdownView value={body} onToggleCheck={onToggleCheck} />
-              ) : (
-                <TextInput
+              <View style={styles.paper}>
+                <RuledLines color={theme.backgroundSelected} />
+                <MarkdownTextInput
                   value={body}
                   onChangeText={changeBody}
+                  parser={parseExpensiMark}
+                  markdownStyle={mdStyle}
                   selection={caret}
                   onSelectionChange={(e) => {
                     setSelection(e.nativeEvent.selection);
@@ -310,9 +322,8 @@ export default function NoteEditorScreen() {
                   multiline
                   textAlignVertical="top"
                 />
-              )}
+              </View>
             </ScrollView>
-            {!preview && <FormatToolbar value={body} selection={selection} onApply={onApplyFormat} />}
           </KeyboardAvoidingView>
         )}
       </SafeAreaView>
@@ -351,6 +362,21 @@ export default function NoteEditorScreen() {
       </Pressable>
     );
   }
+}
+
+/** Faint horizontal rules behind the note body for a journal / ruled-paper feel.
+ *  Spaced to match the body line height; non-interactive so taps hit the text. */
+function RuledLines({ color }: { color: string }) {
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+      {Array.from({ length: 80 }).map((_, i) => (
+        <View
+          key={i}
+          style={{ height: LINE_HEIGHT, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color }}
+        />
+      ))}
+    </View>
+  );
 }
 
 function LockGate({ lockType, onUnlock }: { lockType: LockType; onUnlock: () => void }) {
@@ -392,7 +418,8 @@ const styles = StyleSheet.create({
   editor: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six, gap: Spacing.two },
   titleInput: { fontSize: 26, fontWeight: '700', paddingTop: Spacing.two },
   sharedBanner: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
-  bodyInput: { fontSize: 17, lineHeight: 26, minHeight: 240 },
+  paper: { position: 'relative', minHeight: 320, overflow: 'hidden' },
+  bodyInput: { fontSize: 17, lineHeight: LINE_HEIGHT, minHeight: 320, padding: 0 },
   gate: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.two, padding: Spacing.four },
   gateText: { textAlign: 'center' },
   unlockButton: {

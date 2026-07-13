@@ -17,6 +17,7 @@ export const StorageKeys = {
   pending: 'duonotes.pending', // offline sync queue prefix — `${pending}.${userId}`
   profile: 'duonotes.profile', // cached auth profile prefix — `${profile}.${userId}`
   users: 'duonotes.users',
+  themePreference: 'duonotes.themePreference', // 'light' | 'dark' | 'system'
   session: 'duonotes.session', // SecureStore
   pin: 'duonotes.pin', // SecureStore — JSON { salt, hash }
 } as const;

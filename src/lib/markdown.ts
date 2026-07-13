@@ -70,11 +70,10 @@ export function toggleCheckboxLine(text: string, lineIndex: number): string {
 /** Flatten Markdown to plain text for list-row previews. */
 export function stripMarkdown(md: string): string {
   return md
-    .replace(/^\s*[-*]\s+\[[ xX]\]\s+/gm, '') // checkboxes
     .replace(/^#{1,6}\s+/gm, '') // headings
+    .replace(/^\s*>\s?/gm, '') // blockquotes
     .replace(/^\s*[-*]\s+/gm, '') // bullets
-    .replace(/\*\*(.+?)\*\*/g, '$1') // bold
-    .replace(/\*(.+?)\*/g, '$1') // italic
+    .replace(/[*_~`]/g, '') // inline marks: bold / italic / strikethrough / code
     .replace(/\n+/g, ' ')
     .trim();
 }

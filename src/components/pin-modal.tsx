@@ -162,5 +162,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  keyText: { fontSize: 28, fontWeight: '500' },
+  keyText: { fontSize: 28, lineHeight: 34, fontWeight: '500', textAlign: 'center' },
 });
