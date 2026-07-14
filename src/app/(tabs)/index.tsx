@@ -28,7 +28,7 @@ export default function NotesScreen() {
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-        <View style={styles.header}>
+        <View style={[styles.hero, { backgroundColor: theme.accentSoft }]}>
           <ThemedText type="subtitle">{firstName ? `Hi ${firstName} 💞` : 'Your notes'}</ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
             {myNotes.length === 0
@@ -61,10 +61,12 @@ export default function NotesScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   safeArea: { flex: 1 },
-  header: {
-    paddingHorizontal: Spacing.four,
-    paddingTop: Spacing.three,
-    paddingBottom: Spacing.two,
+  hero: {
+    marginHorizontal: Spacing.four,
+    marginTop: Spacing.three,
+    marginBottom: Spacing.three,
+    padding: Spacing.four,
+    borderRadius: Spacing.four,
     gap: 2,
   },
   fab: {
