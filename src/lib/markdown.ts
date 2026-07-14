@@ -67,6 +67,21 @@ export function toggleCheckboxLine(text: string, lineIndex: number): string {
   return lines.join('\n');
 }
 
+/** Flatten rich-text HTML (or legacy Markdown) to plain text for list previews. */
+export function htmlToPlain(input: string): string {
+  return input
+    .replace(/<\/(p|div|h[1-6]|li|blockquote)>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/[*_~`#>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /** Flatten Markdown to plain text for list-row previews. */
 export function stripMarkdown(md: string): string {
   return md
