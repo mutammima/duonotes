@@ -1,5 +1,7 @@
+import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useState } from 'react';
-import { Keyboard, Platform, StyleSheet, View } from 'react-native';
+import { Keyboard, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
@@ -10,6 +12,8 @@ import {
   useEditorContent,
 } from '@10play/tentap-editor';
 
+import { DrawingCanvas } from '@/components/drawing-canvas';
+import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 /**
@@ -34,6 +38,7 @@ export function RichNoteEditor({
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [showDrawing, setShowDrawing] = useState(false);
 
   // Track keyboard height directly rather than relying on KeyboardAvoidingView,
   // whose automatic shift-up doesn't reliably reach an absolutely-positioned
@@ -126,12 +131,42 @@ export function RichNoteEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [theme.background, theme.text, theme.accent, theme.textSecondary, theme.backgroundElement, theme.backgroundSelected]);
 
+  async function pickImage() {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) return;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 0.5,
+      base64: true,
+    });
+    const asset = result.assets?.[0];
+    if (!result.canceled && asset?.base64) {
+      editor.setImage(`data:image/jpeg;base64,${asset.base64}`);
+    }
+  }
+
   return (
     <View style={styles.flex}>
       <RichText editor={editor} />
       <View style={[styles.toolbar, { bottom: keyboardHeight, paddingBottom: keyboardHeight === 0 ? insets.bottom : 0 }]}>
+        <View style={[styles.attachRow, { backgroundColor: theme.backgroundElement, borderColor: theme.backgroundSelected }]}>
+          <Pressable onPress={pickImage} hitSlop={8} style={styles.attachButton}>
+            <Ionicons name="image-outline" size={20} color={theme.text} />
+          </Pressable>
+          <Pressable onPress={() => setShowDrawing(true)} hitSlop={8} style={styles.attachButton}>
+            <Ionicons name="brush-outline" size={20} color={theme.text} />
+          </Pressable>
+        </View>
         <Toolbar editor={editor} hidden={false} />
       </View>
+      <DrawingCanvas
+        visible={showDrawing}
+        onCancel={() => setShowDrawing(false)}
+        onSave={(dataUri) => {
+          editor.setImage(dataUri);
+          setShowDrawing(false);
+        }}
+      />
     </View>
   );
 }
@@ -139,4 +174,12 @@ export function RichNoteEditor({
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   toolbar: { position: 'absolute', width: '100%', bottom: 0 },
+  attachRow: {
+    flexDirection: 'row',
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  attachButton: { padding: Spacing.one },
 });

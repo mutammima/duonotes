@@ -63,6 +63,14 @@
         {
           "faceIDPermission": "DuoNotes uses Face ID to unlock your locked notes."
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "DuoNotes needs access to your photos so you can add them to a note.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
       ]
     ],
     "experiments": {
