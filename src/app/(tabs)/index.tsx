@@ -11,6 +11,7 @@ import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useNotes } from '@/context/notes-context';
 import { useTheme } from '@/hooks/use-theme';
+import { pickGreeting } from '@/utils/greeting';
 
 export default function NotesScreen() {
   const router = useRouter();
@@ -19,6 +20,7 @@ export default function NotesScreen() {
   const { myNotes, createNote } = useNotes();
 
   const firstName = (user?.name ?? '').trim().split(' ')[0];
+  const greeting = firstName ? pickGreeting(firstName) : 'Your notes';
 
   async function onCompose() {
     const note = await createNote();
@@ -29,7 +31,10 @@ export default function NotesScreen() {
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
         <View style={[styles.hero, { backgroundColor: theme.accentSoft }]}>
-          <ThemedText type="subtitle">{firstName ? `Hi ${firstName} 💞` : 'Your notes'}</ThemedText>
+          <View style={styles.heroTitleRow}>
+            <ThemedText type="subtitle">{greeting}</ThemedText>
+            <Ionicons name="heart" size={22} color={theme.accent} />
+          </View>
           <ThemedText type="small" themeColor="textSecondary">
             {myNotes.length === 0
               ? 'A cozy place for the two of you'
@@ -42,7 +47,7 @@ export default function NotesScreen() {
         <NoteList
           notes={myNotes}
           emptyIcon="heart-outline"
-          emptyLabel={'No notes yet 💌\nTap the + to write your first one together.'}
+          emptyLabel={'No notes yet.\nTap the + to write your first one together.'}
         />
 
         <Pressable
@@ -69,6 +74,7 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.four,
     gap: 2,
   },
+  heroTitleRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
   fab: {
     position: 'absolute',
     right: Spacing.four,

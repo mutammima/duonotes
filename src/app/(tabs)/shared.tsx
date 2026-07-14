@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -16,7 +17,10 @@ export default function SharedScreen() {
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
         <View style={[styles.hero, { backgroundColor: theme.accentSoft }]}>
-          <ThemedText type="subtitle">Shared 💞</ThemedText>
+          <View style={styles.heroTitleRow}>
+            <ThemedText type="subtitle">Shared</ThemedText>
+            <Ionicons name="heart" size={22} color={theme.accent} />
+          </View>
           <ThemedText type="small" themeColor="textSecondary">
             Notes you and your partner can both see
           </ThemedText>
@@ -25,7 +29,7 @@ export default function SharedScreen() {
         <NoteList
           notes={sharedNotes}
           emptyIcon="heart-outline"
-          emptyLabel={'Nothing shared yet 💕\nOpen a note and tap the people icon to share it.'}
+          emptyLabel={'Nothing shared yet.\nOpen a note and tap the people icon to share it.'}
         />
       </SafeAreaView>
     </ThemedView>
@@ -43,4 +47,5 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.four,
     gap: 2,
   },
+  heroTitleRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
 });

@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import { useEffect, useState } from 'react';
 import {
   Alert,
@@ -80,9 +81,12 @@ export default function SettingsScreen() {
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
         <ScrollView contentContainerStyle={styles.content}>
-          <ThemedText type="subtitle" style={styles.title}>
-            Settings
-          </ThemedText>
+          <View style={styles.titleRow}>
+            <Image source={require('@/assets/images/icon.png')} style={styles.brandMark} />
+            <ThemedText type="subtitle" style={styles.title}>
+              Settings
+            </ThemedText>
+          </View>
 
           <Section title="Account">
             <Row icon="person-circle-outline" label={user?.name ?? '—'} value={user?.email} />
@@ -348,7 +352,9 @@ const styles = StyleSheet.create({
     borderWidth: 2.5,
   },
   content: { padding: Spacing.four, gap: Spacing.four, paddingBottom: Spacing.six },
-  title: { marginBottom: Spacing.one },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, marginBottom: Spacing.one },
+  brandMark: { width: 36, height: 36, borderRadius: Spacing.two },
+  title: {},
   section: { gap: Spacing.two },
   sectionTitle: { marginLeft: Spacing.two, letterSpacing: 0.5 },
   card: { borderRadius: Spacing.three, overflow: 'hidden' },
