@@ -98,7 +98,7 @@ export function RichNoteEditor({
         font-size: 17px;
         line-height: 1.5;
       }
-      .ProseMirror { padding: 4px 0 40px; }
+      .ProseMirror { padding: 4px 24px 40px; }
       .ProseMirror p.is-editor-empty:first-child::before {
         color: ${theme.textSecondary};
         content: attr(data-placeholder);

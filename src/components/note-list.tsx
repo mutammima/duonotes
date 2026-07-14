@@ -38,9 +38,7 @@ export function NoteList({
       data={notes}
       keyExtractor={(n) => n.id}
       contentContainerStyle={styles.listContent}
-      ItemSeparatorComponent={() => (
-        <View style={[styles.separator, { backgroundColor: theme.backgroundSelected }]} />
-      )}
+      ItemSeparatorComponent={() => <View style={styles.rowGap} />}
       renderItem={({ item }) => <NoteRow note={item} />}
     />
   );
@@ -58,7 +56,11 @@ function NoteRow({ note }: { note: Note }) {
   return (
     <Pressable
       onPress={() => router.push({ pathname: '/note/[id]', params: { id: note.id } })}
-      style={({ pressed }) => [styles.row, pressed && { backgroundColor: theme.backgroundElement }]}>
+      style={({ pressed }) => [
+        styles.row,
+        { backgroundColor: theme.backgroundElement, borderColor: theme.backgroundSelected },
+        pressed && { backgroundColor: theme.backgroundSelected },
+      ]}>
       <View style={styles.rowMain}>
         <ThemedText type="smallBold" numberOfLines={1} style={styles.rowTitle}>
           {note.title.trim() || 'New Note'}
@@ -97,14 +99,15 @@ function formatWhen(ts: number): string {
 }
 
 const styles = StyleSheet.create({
-  listContent: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.six },
-  separator: { height: StyleSheet.hairlineWidth, marginLeft: Spacing.two },
+  listContent: { paddingHorizontal: Spacing.four, paddingTop: Spacing.one, paddingBottom: Spacing.six },
+  rowGap: { height: Spacing.two },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: Spacing.three,
-    paddingHorizontal: Spacing.two,
-    borderRadius: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    borderRadius: Spacing.three,
+    borderWidth: StyleSheet.hairlineWidth,
     gap: Spacing.two,
   },
   rowMain: { flex: 1, gap: 2 },
