@@ -123,6 +123,35 @@ export function RichNoteEditor({
       }
       hr { border-color: ${theme.backgroundSelected}; }
       ::selection { background-color: ${theme.accentSoft}; }
+      ul[data-type="taskList"] {
+        list-style: none;
+        padding-left: 0;
+      }
+      ul[data-type="taskList"] li {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.5rem;
+      }
+      ul[data-type="taskList"] li > label {
+        flex-shrink: 0;
+        margin-top: 0.2rem;
+        user-select: none;
+      }
+      ul[data-type="taskList"] li > div {
+        flex: 1;
+      }
+      ul[data-type="taskList"] li > div > p {
+        margin: 0;
+      }
+      ul[data-type="taskList"] li[data-checked="true"] > div > p {
+        text-decoration: line-through;
+        color: ${theme.textSecondary};
+      }
+      ul[data-type="taskList"] input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        accent-color: ${theme.accent};
+      }
     `;
     const inject = () => editor.injectCSS(css, 'duonotes-theme');
     inject();

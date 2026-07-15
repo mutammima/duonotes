@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { FlatList, Pressable, StyleSheet, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { FlatList, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -8,6 +9,15 @@ import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { htmlToPlain } from '@/lib/markdown';
 import type { Note } from '@/lib/types';
+
+/** Locked notes keep their body hidden from search, same as the row preview does. */
+function matches(note: Note, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  if (note.title.toLowerCase().includes(q)) return true;
+  if (note.lockType !== 'none') return false;
+  return htmlToPlain(note.body).toLowerCase().includes(q);
+}
 
 export function NoteList({
   notes,
@@ -19,6 +29,9 @@ export function NoteList({
   emptyIcon?: keyof typeof Ionicons.glyphMap;
 }) {
   const theme = useTheme();
+  const [query, setQuery] = useState('');
+
+  const filtered = useMemo(() => notes.filter((n) => matches(n, query)), [notes, query]);
 
   if (notes.length === 0) {
     return (
@@ -34,13 +47,48 @@ export function NoteList({
   }
 
   return (
-    <FlatList
-      data={notes}
-      keyExtractor={(n) => n.id}
-      contentContainerStyle={styles.listContent}
-      ItemSeparatorComponent={() => <View style={styles.rowGap} />}
-      renderItem={({ item }) => <NoteRow note={item} />}
-    />
+    <>
+      <View style={styles.searchRow}>
+        <View style={[styles.searchBar, { backgroundColor: theme.backgroundElement, borderColor: theme.backgroundSelected }]}>
+          <Ionicons name="search" size={16} color={theme.textSecondary} />
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search notes"
+            placeholderTextColor={theme.textSecondary}
+            style={[styles.searchInput, { color: theme.text }]}
+            autoCapitalize="none"
+            autoCorrect={false}
+            clearButtonMode="never"
+          />
+          {query.length > 0 && (
+            <Pressable onPress={() => setQuery('')} hitSlop={8}>
+              <Ionicons name="close-circle" size={18} color={theme.textSecondary} />
+            </Pressable>
+          )}
+        </View>
+      </View>
+
+      {filtered.length === 0 ? (
+        <ThemedView style={styles.empty}>
+          <View style={[styles.emptyBadge, { backgroundColor: theme.accentSoft }]}>
+            <Ionicons name="search" size={30} color={theme.accent} />
+          </View>
+          <ThemedText themeColor="textSecondary" style={styles.emptyText}>
+            {`No notes match "${query.trim()}"`}
+          </ThemedText>
+        </ThemedView>
+      ) : (
+        <FlatList
+          data={filtered}
+          keyExtractor={(n) => n.id}
+          contentContainerStyle={styles.listContent}
+          keyboardShouldPersistTaps="handled"
+          ItemSeparatorComponent={() => <View style={styles.rowGap} />}
+          renderItem={({ item }) => <NoteRow note={item} />}
+        />
+      )}
+    </>
   );
 }
 
@@ -99,6 +147,17 @@ function formatWhen(ts: number): string {
 }
 
 const styles = StyleSheet.create({
+  searchRow: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.three },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: Spacing.three,
+    paddingHorizontal: Spacing.three,
+    height: 40,
+  },
+  searchInput: { flex: 1, fontSize: 15, padding: 0, height: '100%' },
   listContent: { paddingHorizontal: Spacing.four, paddingTop: Spacing.one, paddingBottom: Spacing.six },
   rowGap: { height: Spacing.two },
   row: {
