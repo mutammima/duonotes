@@ -25,7 +25,7 @@ import { clearPin, getBiometricStatus, isPinSet, setPin, type BiometricStatus } 
 
 export default function SettingsScreen() {
   const theme = useTheme();
-  const { user, signOut, linkPartner } = useAuth();
+  const { user, signOut, linkPartner, updateName } = useAuth();
   const { preference, setPreference, accent, setAccent } = useThemePreference();
 
   const [pinSet, setPinSet] = useState(false);
@@ -36,6 +36,11 @@ export default function SettingsScreen() {
   const [partnerEmail, setPartnerEmail] = useState('');
   const [linkError, setLinkError] = useState<string | null>(null);
   const [linking, setLinking] = useState(false);
+
+  const [showNameModal, setShowNameModal] = useState(false);
+  const [nameInput, setNameInput] = useState('');
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [savingName, setSavingName] = useState(false);
 
   useEffect(() => {
     isPinSet().then(setPinSet);
@@ -53,6 +58,25 @@ export default function SettingsScreen() {
       setLinkError(e instanceof Error ? e.message : 'Could not link that account.');
     } finally {
       setLinking(false);
+    }
+  }
+
+  function openNameModal() {
+    setNameInput(user?.name ?? '');
+    setNameError(null);
+    setShowNameModal(true);
+  }
+
+  async function handleSaveName() {
+    setNameError(null);
+    setSavingName(true);
+    try {
+      await updateName(nameInput);
+      setShowNameModal(false);
+    } catch (e) {
+      setNameError(e instanceof Error ? e.message : 'Could not update your name.');
+    } finally {
+      setSavingName(false);
     }
   }
 
@@ -89,7 +113,9 @@ export default function SettingsScreen() {
           </View>
 
           <Section title="Account">
-            <Row icon="person-circle-outline" label={user?.name ?? '—'} value={user?.email} />
+            <Pressable onPress={openNameModal}>
+              <Row icon="person-circle-outline" label={user?.name ?? '—'} value={user?.email} chevron />
+            </Pressable>
           </Section>
 
           <Section title="Partner">
@@ -265,6 +291,65 @@ export default function SettingsScreen() {
                 <ThemedText style={styles.linkButtonText}>
                   {linking ? 'Linking…' : 'Link partner'}
                 </ThemedText>
+              </Pressable>
+            </SafeAreaView>
+          </KeyboardAvoidingView>
+        </ThemedView>
+      </Modal>
+
+      <Modal
+        visible={showNameModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowNameModal(false)}>
+        <ThemedView style={styles.linkModal}>
+          <KeyboardAvoidingView
+            style={styles.flex}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <SafeAreaView style={styles.linkModalBody}>
+              <View style={styles.linkHeader}>
+                <Pressable onPress={() => setShowNameModal(false)} hitSlop={12}>
+                  <ThemedText type="link" style={{ color: theme.accent }}>
+                    Cancel
+                  </ThemedText>
+                </Pressable>
+              </View>
+
+              <Ionicons name="person-circle-outline" size={40} color={theme.accent} />
+              <ThemedText type="subtitle" style={styles.center}>
+                Your name
+              </ThemedText>
+              <ThemedText themeColor="textSecondary" style={styles.center}>
+                Shown on shared notes and in greetings on the home tab.
+              </ThemedText>
+
+              <TextInput
+                value={nameInput}
+                onChangeText={setNameInput}
+                placeholder="Your name"
+                placeholderTextColor={theme.textSecondary}
+                autoCapitalize="words"
+                autoCorrect={false}
+                style={[
+                  styles.linkInput,
+                  { color: theme.text, backgroundColor: theme.backgroundElement },
+                ]}
+              />
+
+              {nameError && (
+                <ThemedText type="small" style={{ color: '#E5484D' }}>
+                  {nameError}
+                </ThemedText>
+              )}
+
+              <Pressable
+                onPress={handleSaveName}
+                disabled={savingName || !nameInput.trim()}
+                style={({ pressed }) => [
+                  styles.linkButton,
+                  { backgroundColor: theme.accent, opacity: pressed || savingName || !nameInput.trim() ? 0.6 : 1 },
+                ]}>
+                <ThemedText style={styles.linkButtonText}>{savingName ? 'Saving…' : 'Save'}</ThemedText>
               </Pressable>
             </SafeAreaView>
           </KeyboardAvoidingView>

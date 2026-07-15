@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Canvas, Fill, ImageFormat, Path, Skia, useCanvasRef } from '@shopify/react-native-skia';
+import { Canvas, ImageFormat, Path, Skia, useCanvasRef } from '@shopify/react-native-skia';
 import { useEffect, useReducer, useRef, useState } from 'react';
-import { Modal, Pressable, StyleSheet, View } from 'react-native';
-import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { Pressable, StyleSheet, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -26,9 +26,13 @@ function pathFromPoints(points: Point[]) {
 }
 
 /**
- * Freehand sketch modal. Draw with a finger, tap Done to flatten the canvas
- * into a PNG data URI, which the caller inserts into the note the same way
- * as a picked photo (`editor.setImage(...)`).
+ * Freehand sketch overlay. A transparent Skia canvas layers directly on top
+ * of the note's RichText WebView (rendered as a later sibling in
+ * RichNoteEditor) so the existing text/images stay visible while drawing —
+ * ink can be aligned against specific words instead of sketching on a blank
+ * surface. Tap Done to flatten the strokes into a transparent PNG data URI,
+ * which the caller inserts at the cursor the same way as a picked photo
+ * (`editor.setImage(...)`).
  */
 export function DrawingCanvas({
   visible,
@@ -50,7 +54,7 @@ export function DrawingCanvas({
   const [, forceTick] = useReducer((c) => c + 1, 0);
 
   // Reset to a fresh sketch — and a default ink color that's actually visible
-  // against the current theme — every time the modal opens.
+  // against the current theme — every time the overlay opens.
   useEffect(() => {
     if (visible) setColor(theme.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -81,6 +85,9 @@ export function DrawingCanvas({
   }
 
   function handleDone() {
+    // No background fill here (unlike the old standalone modal) — this
+    // canvas is meant to composite over the note, so the export stays
+    // transparent and only the ink strokes get inserted.
     const image = canvasRef.current?.makeImageSnapshot();
     if (image) {
       const base64 = image.encodeToBase64(ImageFormat.PNG);
@@ -89,149 +96,142 @@ export function DrawingCanvas({
     setStrokes([]);
   }
 
+  if (!visible) return null;
+
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={() => close(false)}>
-      {/* RN's Modal mounts a separate native view hierarchy on iOS, so the app
-          root's GestureHandlerRootView doesn't reach inside it — without this,
-          the drawing Pan gesture silently never fires. */}
-      <GestureHandlerRootView style={styles.flex}>
+    <View style={StyleSheet.absoluteFill}>
       <View
         style={[
-          styles.container,
-          { backgroundColor: theme.background, paddingTop: insets.top, paddingBottom: insets.bottom },
+          styles.header,
+          { backgroundColor: theme.backgroundElement, paddingTop: insets.top + Spacing.two },
         ]}>
+        <Pressable onPress={() => close(true)} hitSlop={10}>
+          <ThemedText type="link" style={{ color: theme.accent }}>
+            Cancel
+          </ThemedText>
+        </Pressable>
+        <ThemedText type="smallBold">Sketch</ThemedText>
+        <Pressable onPress={handleDone} hitSlop={10} disabled={strokes.length === 0}>
+          <ThemedText
+            type="link"
+            style={{ color: strokes.length === 0 ? theme.textSecondary : theme.accent }}>
+            Done
+          </ThemedText>
+        </Pressable>
+      </View>
 
-        <View style={styles.header}>
-          <Pressable onPress={() => close(true)} hitSlop={10}>
-            <ThemedText type="link" style={{ color: theme.accent }}>
-              Cancel
-            </ThemedText>
-          </Pressable>
-          <ThemedText type="smallBold">Sketch</ThemedText>
-          <Pressable onPress={handleDone} hitSlop={10} disabled={strokes.length === 0}>
-            <ThemedText
-              type="link"
-              style={{ color: strokes.length === 0 ? theme.textSecondary : theme.accent }}>
-              Done
-            </ThemedText>
-          </Pressable>
+      <GestureDetector gesture={pan}>
+        <Canvas ref={canvasRef} style={styles.canvas}>
+          {strokes.map((s, i) => (
+            <Path
+              key={i}
+              path={pathFromPoints(s.points)}
+              color={s.color}
+              style="stroke"
+              strokeWidth={s.width}
+              strokeCap="round"
+              strokeJoin="round"
+            />
+          ))}
+          {currentPoints.current.length > 1 && (
+            <Path
+              path={pathFromPoints(currentPoints.current)}
+              color={color}
+              style="stroke"
+              strokeWidth={strokeWidth}
+              strokeCap="round"
+              strokeJoin="round"
+            />
+          )}
+        </Canvas>
+      </GestureDetector>
+
+      <View
+        style={[
+          styles.toolbar,
+          {
+            backgroundColor: theme.backgroundElement,
+            borderTopColor: theme.backgroundSelected,
+            paddingBottom: insets.bottom + Spacing.three,
+          },
+        ]}>
+        <View style={styles.swatchRow}>
+          {penColors.map((c) => (
+            <Pressable key={c} onPress={() => setColor(c)} hitSlop={4}>
+              <View
+                style={[
+                  styles.swatch,
+                  { backgroundColor: c },
+                  // theme.accent, not theme.text — the first swatch IS
+                  // theme.text, so a text-colored ring would be invisible
+                  // against its own fill when that swatch is selected.
+                  color === c && { borderColor: theme.accent, borderWidth: 2 },
+                ]}
+              />
+            </Pressable>
+          ))}
         </View>
-
-        <GestureDetector gesture={pan}>
-          <View style={[styles.canvasWrap, { backgroundColor: theme.background }]}>
-            <Canvas ref={canvasRef} style={styles.canvas}>
-              {/* Skia's canvas is transparent by default — without this the
-                  exported PNG has no fill, so ink the same color as a dark
-                  theme's text becomes invisible once embedded in the note. */}
-              <Fill color={theme.background} />
-              {strokes.map((s, i) => (
-                <Path
-                  key={i}
-                  path={pathFromPoints(s.points)}
-                  color={s.color}
-                  style="stroke"
-                  strokeWidth={s.width}
-                  strokeCap="round"
-                  strokeJoin="round"
-                />
-              ))}
-              {currentPoints.current.length > 1 && (
-                <Path
-                  path={pathFromPoints(currentPoints.current)}
-                  color={color}
-                  style="stroke"
-                  strokeWidth={strokeWidth}
-                  strokeCap="round"
-                  strokeJoin="round"
-                />
-              )}
-            </Canvas>
-          </View>
-        </GestureDetector>
-
-        <View style={[styles.toolbar, { borderTopColor: theme.backgroundSelected }]}>
-          <View style={styles.swatchRow}>
-            {penColors.map((c) => (
-              <Pressable key={c} onPress={() => setColor(c)} hitSlop={4}>
+        <View style={styles.actionsRow}>
+          <View style={styles.widthRow}>
+            {STROKE_WIDTHS.map((w) => (
+              <Pressable key={w} onPress={() => setStrokeWidth(w)} style={styles.widthDotWrap} hitSlop={6}>
                 <View
                   style={[
-                    styles.swatch,
-                    { backgroundColor: c },
-                    // theme.accent, not theme.text — the first swatch IS
-                    // theme.text, so a text-colored ring would be invisible
-                    // against its own fill when that swatch is selected.
-                    color === c && { borderColor: theme.accent, borderWidth: 2 },
+                    styles.widthDot,
+                    {
+                      width: w * 2,
+                      height: w * 2,
+                      borderRadius: w,
+                      backgroundColor: strokeWidth === w ? theme.accent : theme.textSecondary,
+                    },
                   ]}
                 />
               </Pressable>
             ))}
           </View>
           <View style={styles.actionsRow}>
-            <View style={styles.widthRow}>
-              {STROKE_WIDTHS.map((w) => (
-                <Pressable key={w} onPress={() => setStrokeWidth(w)} style={styles.widthDotWrap} hitSlop={6}>
-                  <View
-                    style={[
-                      styles.widthDot,
-                      {
-                        width: w * 2,
-                        height: w * 2,
-                        borderRadius: w,
-                        backgroundColor: strokeWidth === w ? theme.accent : theme.textSecondary,
-                      },
-                    ]}
-                  />
-                </Pressable>
-              ))}
-            </View>
-            <View style={styles.actionsRow}>
-              <Pressable
-                onPress={() => setStrokes((s) => s.slice(0, -1))}
-                disabled={strokes.length === 0}
-                hitSlop={8}
-                style={styles.actionButton}>
-                <Ionicons
-                  name="arrow-undo-outline"
-                  size={22}
-                  color={strokes.length === 0 ? theme.backgroundSelected : theme.text}
-                />
-              </Pressable>
-              <Pressable
-                onPress={() => setStrokes([])}
-                disabled={strokes.length === 0}
-                hitSlop={8}
-                style={styles.actionButton}>
-                <Ionicons
-                  name="trash-outline"
-                  size={22}
-                  color={strokes.length === 0 ? theme.backgroundSelected : '#E5484D'}
-                />
-              </Pressable>
-            </View>
+            <Pressable
+              onPress={() => setStrokes((s) => s.slice(0, -1))}
+              disabled={strokes.length === 0}
+              hitSlop={8}
+              style={styles.actionButton}>
+              <Ionicons
+                name="arrow-undo-outline"
+                size={22}
+                color={strokes.length === 0 ? theme.backgroundSelected : theme.text}
+              />
+            </Pressable>
+            <Pressable
+              onPress={() => setStrokes([])}
+              disabled={strokes.length === 0}
+              hitSlop={8}
+              style={styles.actionButton}>
+              <Ionicons
+                name="trash-outline"
+                size={22}
+                color={strokes.length === 0 ? theme.backgroundSelected : '#E5484D'}
+              />
+            </Pressable>
           </View>
         </View>
       </View>
-      </GestureHandlerRootView>
-    </Modal>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
-  container: { flex: 1 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
+    paddingBottom: Spacing.two,
   },
-  canvasWrap: { flex: 1 },
   canvas: { flex: 1 },
   toolbar: {
     borderTopWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.three,
+    paddingTop: Spacing.three,
     gap: Spacing.three,
   },
   swatchRow: { flexDirection: 'row', gap: Spacing.three, justifyContent: 'center' },

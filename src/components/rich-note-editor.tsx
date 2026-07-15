@@ -177,17 +177,27 @@ export function RichNoteEditor({
   return (
     <View style={styles.flex}>
       <RichText editor={editor} />
-      <View style={[styles.toolbar, { bottom: keyboardHeight, paddingBottom: keyboardHeight === 0 ? insets.bottom : 0 }]}>
-        <View style={[styles.attachRow, { backgroundColor: theme.backgroundElement, borderColor: theme.backgroundSelected }]}>
-          <Pressable onPress={pickImage} hitSlop={8} style={styles.attachButton}>
-            <Ionicons name="image-outline" size={20} color={theme.text} />
-          </Pressable>
-          <Pressable onPress={() => setShowDrawing(true)} hitSlop={8} style={styles.attachButton}>
-            <Ionicons name="brush-outline" size={20} color={theme.text} />
-          </Pressable>
+      {!showDrawing && (
+        <View style={[styles.toolbar, { bottom: keyboardHeight, paddingBottom: keyboardHeight === 0 ? insets.bottom : 0 }]}>
+          <View style={[styles.attachRow, { backgroundColor: theme.backgroundElement, borderColor: theme.backgroundSelected }]}>
+            <Pressable onPress={pickImage} hitSlop={8} style={styles.attachButton}>
+              <Ionicons name="image-outline" size={20} color={theme.text} />
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                // Dismiss the keyboard/editor focus first — the sketch overlay
+                // takes over the same screen space, not a separate modal.
+                editor.blur();
+                setShowDrawing(true);
+              }}
+              hitSlop={8}
+              style={styles.attachButton}>
+              <Ionicons name="brush-outline" size={20} color={theme.text} />
+            </Pressable>
+          </View>
+          <Toolbar editor={editor} hidden={false} />
         </View>
-        <Toolbar editor={editor} hidden={false} />
-      </View>
+      )}
       <DrawingCanvas
         visible={showDrawing}
         onCancel={() => setShowDrawing(false)}
