@@ -25,6 +25,8 @@ interface AuthContextValue {
   linkPartner: (email: string) => Promise<void>;
   /** Re-read the current profile (e.g. after linking a partner). */
   refreshProfile: () => Promise<void>;
+  /** Change the display name shown on shared notes and in greetings. */
+  updateName: (name: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -125,9 +127,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [refreshProfile],
   );
 
+  const updateName = useCallback(
+    async (name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) throw new Error('Please enter a name.');
+      if (!user) return;
+      const { error } = await supabase.from(TABLES.profiles).update({ name: trimmed }).eq('id', user.id);
+      if (error) throw new Error(error.message);
+      const next = { ...user, name: trimmed };
+      setUser(next);
+      await saveJSON(`${StorageKeys.profile}.${user.id}`, next);
+    },
+    [user],
+  );
+
   const value = useMemo<AuthContextValue>(
-    () => ({ user, initializing, signUp, signIn, signOut, linkPartner, refreshProfile }),
-    [user, initializing, signUp, signIn, signOut, linkPartner, refreshProfile],
+    () => ({ user, initializing, signUp, signIn, signOut, linkPartner, refreshProfile, updateName }),
+    [user, initializing, signUp, signIn, signOut, linkPartner, refreshProfile, updateName],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
