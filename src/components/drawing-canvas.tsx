@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Canvas, ImageFormat, Path, Skia, useCanvasRef } from '@shopify/react-native-skia';
-import { useReducer, useRef, useState } from 'react';
+import { Canvas, Fill, ImageFormat, Path, Skia, useCanvasRef } from '@shopify/react-native-skia';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import { Modal, Pressable, StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,7 +9,9 @@ import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
-const PEN_COLORS = ['#1A1618', '#E6488E', '#FB7185', '#9B7EDE', '#3C87F7'];
+/** Accent swatches; the first slot is filled in with the current theme's text
+ *  color at render time so the default ink is always readable. */
+const ACCENT_COLORS = ['#E6488E', '#FB7185', '#9B7EDE', '#3C87F7'];
 const STROKE_WIDTHS = [3, 6, 10];
 
 type Point = { x: number; y: number };
@@ -40,11 +42,19 @@ export function DrawingCanvas({
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const canvasRef = useCanvasRef();
+  const penColors = [theme.text, ...ACCENT_COLORS];
   const [strokes, setStrokes] = useState<Stroke[]>([]);
-  const [color, setColor] = useState(PEN_COLORS[0]);
+  const [color, setColor] = useState<string>(theme.text);
   const [strokeWidth, setStrokeWidth] = useState(STROKE_WIDTHS[1]);
   const currentPoints = useRef<Point[]>([]);
   const [, forceTick] = useReducer((c) => c + 1, 0);
+
+  // Reset to a fresh sketch — and a default ink color that's actually visible
+  // against the current theme — every time the modal opens.
+  useEffect(() => {
+    if (visible) setColor(theme.text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
   const pan = Gesture.Pan()
     .runOnJS(true)
@@ -108,8 +118,12 @@ export function DrawingCanvas({
         </View>
 
         <GestureDetector gesture={pan}>
-          <View style={styles.canvasWrap}>
+          <View style={[styles.canvasWrap, { backgroundColor: theme.background }]}>
             <Canvas ref={canvasRef} style={styles.canvas}>
+              {/* Skia's canvas is transparent by default — without this the
+                  exported PNG has no fill, so ink the same color as a dark
+                  theme's text becomes invisible once embedded in the note. */}
+              <Fill color={theme.background} />
               {strokes.map((s, i) => (
                 <Path
                   key={i}
@@ -137,13 +151,16 @@ export function DrawingCanvas({
 
         <View style={[styles.toolbar, { borderTopColor: theme.backgroundSelected }]}>
           <View style={styles.swatchRow}>
-            {PEN_COLORS.map((c) => (
+            {penColors.map((c) => (
               <Pressable key={c} onPress={() => setColor(c)} hitSlop={4}>
                 <View
                   style={[
                     styles.swatch,
                     { backgroundColor: c },
-                    color === c && { borderColor: theme.text, borderWidth: 2 },
+                    // theme.accent, not theme.text — the first swatch IS
+                    // theme.text, so a text-colored ring would be invisible
+                    // against its own fill when that swatch is selected.
+                    color === c && { borderColor: theme.accent, borderWidth: 2 },
                   ]}
                 />
               </Pressable>
@@ -209,7 +226,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.two,
   },
-  canvasWrap: { flex: 1, backgroundColor: '#FFFFFF' },
+  canvasWrap: { flex: 1 },
   canvas: { flex: 1 },
   toolbar: {
     borderTopWidth: StyleSheet.hairlineWidth,
