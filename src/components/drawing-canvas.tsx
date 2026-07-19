@@ -1,21 +1,18 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Canvas, ImageFormat, Path, Skia, useCanvasRef } from '@shopify/react-native-skia';
-import { useEffect, useReducer, useRef, useState } from 'react';
+import { Canvas, ImageFormat, Path, Skia, useCanvasRef, type SkPath } from '@shopify/react-native-skia';
+import { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { ACCENTS, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
-/** Accent swatches; the first slot is filled in with the current theme's text
- *  color at render time so the default ink is always readable. */
-const ACCENT_COLORS = ['#E6488E', '#FB7185', '#9B7EDE', '#3C87F7'];
 const STROKE_WIDTHS = [3, 6, 10];
 
 type Point = { x: number; y: number };
-type Stroke = { points: Point[]; color: string; width: number };
+type Stroke = { path: SkPath; color: string; width: number };
 
 function pathFromPoints(points: Point[]) {
   const path = Skia.Path.Make();
@@ -46,12 +43,11 @@ export function DrawingCanvas({
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const canvasRef = useCanvasRef();
-  const penColors = [theme.text, ...ACCENT_COLORS];
+  const penColors = useMemo(() => [theme.text, ...Object.values(ACCENTS)], [theme.text]);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [color, setColor] = useState<string>(theme.text);
   const [strokeWidth, setStrokeWidth] = useState(STROKE_WIDTHS[1]);
-  const currentPoints = useRef<Point[]>([]);
-  const [, forceTick] = useReducer((c) => c + 1, 0);
+  const [currentPoints, setCurrentPoints] = useState<Point[]>([]);
 
   // Reset to a fresh sketch — and a default ink color that's actually visible
   // against the current theme — every time the overlay opens.
@@ -60,29 +56,25 @@ export function DrawingCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
-  const pan = Gesture.Pan()
-    .runOnJS(true)
-    .onStart((e) => {
-      currentPoints.current = [{ x: e.x, y: e.y }];
-      forceTick();
-    })
-    .onUpdate((e) => {
-      currentPoints.current = [...currentPoints.current, { x: e.x, y: e.y }];
-      forceTick();
-    })
-    .onEnd(() => {
-      const points = currentPoints.current;
-      if (points.length > 0) {
-        setStrokes((s) => [...s, { points, color, width: strokeWidth }]);
-      }
-      currentPoints.current = [];
-      forceTick();
-    });
-
-  function close(clear: boolean) {
-    if (clear) setStrokes([]);
-    onCancel();
-  }
+  // Functional state updates throughout, so this never needs `currentPoints`
+  // itself in its dependency array — memoizing on just [color, strokeWidth]
+  // still always sees the latest in-progress points.
+  const pan = useMemo(
+    () =>
+      Gesture.Pan()
+        .runOnJS(true)
+        .onStart((e) => setCurrentPoints([{ x: e.x, y: e.y }]))
+        .onUpdate((e) => setCurrentPoints((pts) => [...pts, { x: e.x, y: e.y }]))
+        .onEnd(() =>
+          setCurrentPoints((pts) => {
+            if (pts.length > 0) {
+              setStrokes((s) => [...s, { path: pathFromPoints(pts), color, width: strokeWidth }]);
+            }
+            return [];
+          }),
+        ),
+    [color, strokeWidth],
+  );
 
   function handleDone() {
     // No background fill here (unlike the old standalone modal) — this
@@ -105,7 +97,12 @@ export function DrawingCanvas({
           styles.header,
           { backgroundColor: theme.backgroundElement, paddingTop: insets.top + Spacing.two },
         ]}>
-        <Pressable onPress={() => close(true)} hitSlop={10}>
+        <Pressable
+          onPress={() => {
+            setStrokes([]);
+            onCancel();
+          }}
+          hitSlop={10}>
           <ThemedText type="link" style={{ color: theme.accent }}>
             Cancel
           </ThemedText>
@@ -125,7 +122,7 @@ export function DrawingCanvas({
           {strokes.map((s, i) => (
             <Path
               key={i}
-              path={pathFromPoints(s.points)}
+              path={s.path}
               color={s.color}
               style="stroke"
               strokeWidth={s.width}
@@ -133,9 +130,9 @@ export function DrawingCanvas({
               strokeJoin="round"
             />
           ))}
-          {currentPoints.current.length > 1 && (
+          {currentPoints.length > 1 && (
             <Path
-              path={pathFromPoints(currentPoints.current)}
+              path={pathFromPoints(currentPoints)}
               color={color}
               style="stroke"
               strokeWidth={strokeWidth}
@@ -176,15 +173,12 @@ export function DrawingCanvas({
             {STROKE_WIDTHS.map((w) => (
               <Pressable key={w} onPress={() => setStrokeWidth(w)} style={styles.widthDotWrap} hitSlop={6}>
                 <View
-                  style={[
-                    styles.widthDot,
-                    {
-                      width: w * 2,
-                      height: w * 2,
-                      borderRadius: w,
-                      backgroundColor: strokeWidth === w ? theme.accent : theme.textSecondary,
-                    },
-                  ]}
+                  style={{
+                    width: w * 2,
+                    height: w * 2,
+                    borderRadius: w,
+                    backgroundColor: strokeWidth === w ? theme.accent : theme.textSecondary,
+                  }}
                 />
               </Pressable>
             ))}
@@ -239,6 +233,5 @@ const styles = StyleSheet.create({
   actionsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   widthRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   widthDotWrap: { alignItems: 'center', justifyContent: 'center', width: 28, height: 28 },
-  widthDot: {},
   actionButton: { padding: Spacing.one },
 });
