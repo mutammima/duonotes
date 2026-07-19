@@ -1,20 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useEffect, useState } from 'react';
-import {
-  Alert,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PinModal } from '@/components/pin-modal';
+import { PromptModal } from '@/components/prompt-modal';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { ACCENT_LABELS, ACCENTS, type AccentKey, Spacing } from '@/constants/theme';
@@ -234,127 +225,40 @@ export default function SettingsScreen() {
         onCancel={() => setShowPinModal(false)}
       />
 
-      <Modal
+      <PromptModal
         visible={showLinkModal}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setShowLinkModal(false)}>
-        <ThemedView style={styles.linkModal}>
-          <KeyboardAvoidingView
-            style={styles.flex}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-            <SafeAreaView style={styles.linkModalBody}>
-              <View style={styles.linkHeader}>
-                <Pressable onPress={() => setShowLinkModal(false)} hitSlop={12}>
-                  <ThemedText type="link" style={{ color: theme.accent }}>
-                    Cancel
-                  </ThemedText>
-                </Pressable>
-              </View>
+        icon="heart"
+        title="Link your partner"
+        subtitle="Enter the email your partner signed up with. Once linked, notes either of you shares will appear for both."
+        value={partnerEmail}
+        onChangeValue={setPartnerEmail}
+        placeholder="partner@example.com"
+        keyboardType="email-address"
+        autoCapitalize="none"
+        error={linkError}
+        submitLabel="Link partner"
+        savingLabel="Linking…"
+        submitting={linking}
+        onSubmit={handleLinkPartner}
+        onCancel={() => setShowLinkModal(false)}
+      />
 
-              <Ionicons name="heart" size={40} color={theme.accent} />
-              <ThemedText type="subtitle" style={styles.center}>
-                Link your partner
-              </ThemedText>
-              <ThemedText themeColor="textSecondary" style={styles.center}>
-                Enter the email your partner signed up with. Once linked, notes either of you shares
-                will appear for both.
-              </ThemedText>
-
-              <TextInput
-                value={partnerEmail}
-                onChangeText={setPartnerEmail}
-                placeholder="partner@example.com"
-                placeholderTextColor={theme.textSecondary}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-                style={[
-                  styles.linkInput,
-                  { color: theme.text, backgroundColor: theme.backgroundElement },
-                ]}
-              />
-
-              {linkError && (
-                <ThemedText type="small" style={{ color: '#E5484D' }}>
-                  {linkError}
-                </ThemedText>
-              )}
-
-              <Pressable
-                onPress={handleLinkPartner}
-                disabled={linking || !partnerEmail.trim()}
-                style={({ pressed }) => [
-                  styles.linkButton,
-                  { backgroundColor: theme.accent, opacity: pressed || linking || !partnerEmail.trim() ? 0.6 : 1 },
-                ]}>
-                <ThemedText style={styles.linkButtonText}>
-                  {linking ? 'Linking…' : 'Link partner'}
-                </ThemedText>
-              </Pressable>
-            </SafeAreaView>
-          </KeyboardAvoidingView>
-        </ThemedView>
-      </Modal>
-
-      <Modal
+      <PromptModal
         visible={showNameModal}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setShowNameModal(false)}>
-        <ThemedView style={styles.linkModal}>
-          <KeyboardAvoidingView
-            style={styles.flex}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-            <SafeAreaView style={styles.linkModalBody}>
-              <View style={styles.linkHeader}>
-                <Pressable onPress={() => setShowNameModal(false)} hitSlop={12}>
-                  <ThemedText type="link" style={{ color: theme.accent }}>
-                    Cancel
-                  </ThemedText>
-                </Pressable>
-              </View>
-
-              <Ionicons name="person-circle-outline" size={40} color={theme.accent} />
-              <ThemedText type="subtitle" style={styles.center}>
-                Your name
-              </ThemedText>
-              <ThemedText themeColor="textSecondary" style={styles.center}>
-                Shown on shared notes and in greetings on the home tab.
-              </ThemedText>
-
-              <TextInput
-                value={nameInput}
-                onChangeText={setNameInput}
-                placeholder="Your name"
-                placeholderTextColor={theme.textSecondary}
-                autoCapitalize="words"
-                autoCorrect={false}
-                style={[
-                  styles.linkInput,
-                  { color: theme.text, backgroundColor: theme.backgroundElement },
-                ]}
-              />
-
-              {nameError && (
-                <ThemedText type="small" style={{ color: '#E5484D' }}>
-                  {nameError}
-                </ThemedText>
-              )}
-
-              <Pressable
-                onPress={handleSaveName}
-                disabled={savingName || !nameInput.trim()}
-                style={({ pressed }) => [
-                  styles.linkButton,
-                  { backgroundColor: theme.accent, opacity: pressed || savingName || !nameInput.trim() ? 0.6 : 1 },
-                ]}>
-                <ThemedText style={styles.linkButtonText}>{savingName ? 'Saving…' : 'Save'}</ThemedText>
-              </Pressable>
-            </SafeAreaView>
-          </KeyboardAvoidingView>
-        </ThemedView>
-      </Modal>
+        icon="person-circle-outline"
+        title="Your name"
+        subtitle="Shown on shared notes and in greetings on the home tab."
+        value={nameInput}
+        onChangeValue={setNameInput}
+        placeholder="Your name"
+        autoCapitalize="words"
+        error={nameError}
+        submitLabel="Save"
+        savingLabel="Saving…"
+        submitting={savingName}
+        onSubmit={handleSaveName}
+        onCancel={() => setShowNameModal(false)}
+      />
     </ThemedView>
   );
 
@@ -458,29 +362,4 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.three,
     alignItems: 'center',
   },
-  flex: { flex: 1 },
-  linkModal: { flex: 1 },
-  linkModalBody: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.three,
-  },
-  linkHeader: { position: 'absolute', top: Spacing.four, left: Spacing.four },
-  center: { textAlign: 'center' },
-  linkInput: {
-    alignSelf: 'stretch',
-    borderRadius: Spacing.three,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two + 2,
-    fontSize: 16,
-  },
-  linkButton: {
-    alignSelf: 'stretch',
-    borderRadius: Spacing.three,
-    paddingVertical: Spacing.three,
-    alignItems: 'center',
-  },
-  linkButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
 });

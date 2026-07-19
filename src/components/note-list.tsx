@@ -11,12 +11,14 @@ import { htmlToPlain } from '@/lib/markdown';
 import type { Note } from '@/lib/types';
 
 /** Locked notes keep their body hidden from search, same as the row preview does. */
-function matches(note: Note, query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
-  if (note.title.toLowerCase().includes(q)) return true;
-  if (note.lockType !== 'none') return false;
-  return htmlToPlain(note.body).toLowerCase().includes(q);
+type Searchable = { note: Note; titleLower: string; bodyLower: string };
+
+function buildSearchIndex(notes: Note[]): Searchable[] {
+  return notes.map((note) => ({
+    note,
+    titleLower: note.title.toLowerCase(),
+    bodyLower: note.lockType === 'none' ? htmlToPlain(note.body).toLowerCase() : '',
+  }));
 }
 
 export function NoteList({
@@ -31,19 +33,18 @@ export function NoteList({
   const theme = useTheme();
   const [query, setQuery] = useState('');
 
-  const filtered = useMemo(() => notes.filter((n) => matches(n, query)), [notes, query]);
+  // Plain-text extraction only needs to re-run when the notes themselves
+  // change, not on every keystroke — filtering against the cached lowercase
+  // text below is a cheap string scan either way.
+  const searchIndex = useMemo(() => buildSearchIndex(notes), [notes]);
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return notes;
+    return searchIndex.filter((s) => s.titleLower.includes(q) || s.bodyLower.includes(q)).map((s) => s.note);
+  }, [searchIndex, query, notes]);
 
   if (notes.length === 0) {
-    return (
-      <ThemedView style={styles.empty}>
-        <View style={[styles.emptyBadge, { backgroundColor: theme.accentSoft }]}>
-          <Ionicons name={emptyIcon} size={34} color={theme.accent} />
-        </View>
-        <ThemedText themeColor="textSecondary" style={styles.emptyText}>
-          {emptyLabel}
-        </ThemedText>
-      </ThemedView>
-    );
+    return <EmptyState icon={emptyIcon} theme={theme} text={emptyLabel} />;
   }
 
   return (
@@ -70,14 +71,7 @@ export function NoteList({
       </View>
 
       {filtered.length === 0 ? (
-        <ThemedView style={styles.empty}>
-          <View style={[styles.emptyBadge, { backgroundColor: theme.accentSoft }]}>
-            <Ionicons name="search" size={30} color={theme.accent} />
-          </View>
-          <ThemedText themeColor="textSecondary" style={styles.emptyText}>
-            {`No notes match "${query.trim()}"`}
-          </ThemedText>
-        </ThemedView>
+        <EmptyState icon="search" size={30} theme={theme} text={`No notes match "${query.trim()}"`} />
       ) : (
         <FlatList
           data={filtered}
@@ -89,6 +83,29 @@ export function NoteList({
         />
       )}
     </>
+  );
+}
+
+function EmptyState({
+  icon,
+  size = 34,
+  theme,
+  text,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  size?: number;
+  theme: ReturnType<typeof useTheme>;
+  text: string;
+}) {
+  return (
+    <ThemedView style={styles.empty}>
+      <View style={[styles.emptyBadge, { backgroundColor: theme.accentSoft }]}>
+        <Ionicons name={icon} size={size} color={theme.accent} />
+      </View>
+      <ThemedText themeColor="textSecondary" style={styles.emptyText}>
+        {text}
+      </ThemedText>
+    </ThemedView>
   );
 }
 
