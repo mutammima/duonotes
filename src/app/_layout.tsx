@@ -4,7 +4,9 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
+import { AppLockGate } from '@/components/app-lock-gate';
 import { ConfigNotice } from '@/components/config-notice';
+import { AppLockProvider } from '@/context/app-lock-context';
 import { AuthProvider, useAuth } from '@/context/auth-context';
 import { ThemePreferenceProvider, useThemeScheme } from '@/context/theme-context';
 import { NotesProvider } from '@/context/notes-context';
@@ -63,7 +65,11 @@ function ThemedRoot() {
       {isSupabaseConfigured ? (
         <AuthProvider>
           <NotesProvider>
-            <RootNavigator />
+            <AppLockProvider>
+              <AppLockGate>
+                <RootNavigator />
+              </AppLockGate>
+            </AppLockProvider>
           </NotesProvider>
         </AuthProvider>
       ) : (

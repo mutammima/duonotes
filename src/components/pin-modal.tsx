@@ -2,12 +2,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import { Modal, Pressable, StyleSheet, View } from 'react-native';
 
+import { PIN_LENGTH, PinPad } from '@/components/pin-pad';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-
-const PIN_LENGTH = 4;
 
 interface PinModalProps {
   visible: boolean;
@@ -89,54 +88,19 @@ export function PinModal({ visible, mode, title, onSubmit, onCancel }: PinModalP
           <ThemedText type="subtitle" style={styles.title}>
             {title}
           </ThemedText>
-          <ThemedText themeColor="textSecondary">{subtitle}</ThemedText>
 
-          <View style={styles.dots}>
-            {Array.from({ length: PIN_LENGTH }).map((_, i) => (
-              <View
-                key={i}
-                style={[
-                  styles.dot,
-                  { borderColor: theme.textSecondary },
-                  i < entry.length && { backgroundColor: theme.accent, borderColor: theme.accent },
-                ]}
-              />
-            ))}
-          </View>
-
-          <ThemedText type="small" style={[styles.error, { color: error ? '#E5484D' : 'transparent' }]}>
-            {error ?? '·'}
-          </ThemedText>
-
-          <View style={styles.pad}>
-            {['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'].map((key, i) => {
-              if (key === '') return <View key={i} style={styles.key} />;
-              const isBksp = key === '⌫';
-              return (
-                <Pressable
-                  key={i}
-                  onPress={() => (isBksp ? backspace() : press(key))}
-                  style={({ pressed }) => [
-                    styles.key,
-                    { backgroundColor: pressed ? theme.backgroundSelected : theme.backgroundElement },
-                    isBksp && { backgroundColor: 'transparent' },
-                  ]}>
-                  {isBksp ? (
-                    <Ionicons name="backspace-outline" size={24} color={theme.text} />
-                  ) : (
-                    <ThemedText style={styles.keyText}>{key}</ThemedText>
-                  )}
-                </Pressable>
-              );
-            })}
-          </View>
+          <PinPad
+            entry={entry}
+            subtitle={subtitle}
+            error={error}
+            onDigit={press}
+            onBackspace={backspace}
+          />
         </View>
       </ThemedView>
     </Modal>
   );
 }
-
-const KEY_SIZE = 72;
 
 const styles = StyleSheet.create({
   container: { flex: 1, paddingTop: Spacing.six },
@@ -144,23 +108,4 @@ const styles = StyleSheet.create({
   cancel: { alignSelf: 'flex-start' },
   content: { flex: 1, alignItems: 'center', paddingTop: Spacing.four, gap: Spacing.two },
   title: { marginTop: Spacing.two },
-  dots: { flexDirection: 'row', gap: Spacing.three, marginVertical: Spacing.four },
-  dot: { width: 16, height: 16, borderRadius: 8, borderWidth: 2 },
-  error: { height: 20 },
-  pad: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    width: KEY_SIZE * 3 + Spacing.three * 2,
-    gap: Spacing.three,
-    justifyContent: 'center',
-    marginTop: Spacing.two,
-  },
-  key: {
-    width: KEY_SIZE,
-    height: KEY_SIZE,
-    borderRadius: KEY_SIZE / 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  keyText: { fontSize: 28, lineHeight: 34, fontWeight: '500', textAlign: 'center' },
 });

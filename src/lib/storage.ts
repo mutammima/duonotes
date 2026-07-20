@@ -21,6 +21,7 @@ export const StorageKeys = {
   accentPreference: 'duonotes.accentPreference', // 'rose' | 'coral' | 'lavender' | 'blue'
   session: 'duonotes.session', // SecureStore
   pin: 'duonotes.pin', // SecureStore — JSON { salt, hash }
+  appLock: 'duonotes.appLock', // AsyncStorage — boolean, gate the whole app behind PIN/biometric
 } as const;
 
 /* ------------------------------- AsyncStorage ------------------------------ */
