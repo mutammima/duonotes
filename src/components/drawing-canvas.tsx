@@ -77,14 +77,54 @@ export function DrawingCanvas({
   );
 
   function handleDone() {
-    // No background fill here (unlike the old standalone modal) — this
-    // canvas is meant to composite over the note, so the export stays
-    // transparent and only the ink strokes get inserted.
-    const image = canvasRef.current?.makeImageSnapshot();
-    if (image) {
-      const base64 = image.encodeToBase64(ImageFormat.PNG);
-      onSave(`data:image/png;base64,${base64}`);
+    // Crop the export to the ink's bounding box — a full-canvas, mostly
+    // transparent PNG reads as a huge empty block once inserted in the note,
+    // while a tight crop drops in at the size it was actually drawn. No
+    // background fill: the export stays transparent so only the ink shows.
+    let left = Infinity;
+    let top = Infinity;
+    let right = -Infinity;
+    let bottom = -Infinity;
+    for (const s of strokes) {
+      const b = s.path.getBounds();
+      // Ink extends half the stroke width past the path centerline (round
+      // caps included), plus a hair of margin so nothing kisses the edge.
+      const pad = s.width / 2 + 2;
+      left = Math.min(left, b.x - pad);
+      top = Math.min(top, b.y - pad);
+      right = Math.max(right, b.x + b.width + pad);
+      bottom = Math.max(bottom, b.y + b.height + pad);
     }
+    if (right <= left || bottom <= top) return;
+    const x = Math.max(0, left);
+    const y = Math.max(0, top);
+    const w = Math.ceil(right - x);
+    const h = Math.ceil(bottom - y);
+
+    const snapshot = canvasRef.current?.makeImageSnapshot(Skia.XYWHRect(x, y, w, h));
+    if (!snapshot) return;
+
+    // The snapshot can come back in physical pixels (3x on modern iPhones),
+    // but the note's WebView renders an <img> at 1 CSS px per image px —
+    // exported as-is the sketch would land ~3x larger than it was drawn.
+    // Resample to logical-point dimensions when the two disagree.
+    let image = snapshot;
+    if (snapshot.width() !== w) {
+      const surface = Skia.Surface.Make(w, h);
+      if (surface) {
+        surface
+          .getCanvas()
+          .drawImageRect(
+            snapshot,
+            Skia.XYWHRect(0, 0, snapshot.width(), snapshot.height()),
+            Skia.XYWHRect(0, 0, w, h),
+            Skia.Paint(),
+          );
+        image = surface.makeImageSnapshot();
+      }
+    }
+
+    onSave(`data:image/png;base64,${image.encodeToBase64(ImageFormat.PNG)}`);
     setStrokes([]);
   }
 
