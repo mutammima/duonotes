@@ -11,7 +11,7 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import { Platform } from 'react-native';
 
 import { generateSalt, hashSecret, secretsMatch } from '@/lib/crypto';
-import { deleteSecret, loadSecret, saveSecret, StorageKeys } from '@/lib/storage';
+import { deleteSecret, loadJSON, loadSecret, saveJSON, saveSecret, StorageKeys } from '@/lib/storage';
 
 interface StoredPin {
   salt: string;
@@ -66,6 +66,19 @@ export async function getBiometricStatus(): Promise<BiometricStatus> {
     label = Platform.OS === 'ios' ? 'Touch ID' : 'Fingerprint';
   }
   return { available: hasHardware, enrolled, label };
+}
+
+/* --------------------------- App-level lock flag --------------------------- */
+
+/** Whether the whole app is gated behind the PIN/biometric on launch and
+ *  when returning from the background. Just a preference — the actual secret
+ *  is the shared PIN (or the OS biometric). */
+export async function isAppLockEnabled(): Promise<boolean> {
+  return loadJSON<boolean>(StorageKeys.appLock, false);
+}
+
+export async function setAppLockEnabled(on: boolean): Promise<void> {
+  await saveJSON(StorageKeys.appLock, on);
 }
 
 export async function authenticateBiometric(reason: string): Promise<boolean> {

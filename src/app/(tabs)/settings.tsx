@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PinModal } from '@/components/pin-modal';
@@ -9,6 +9,7 @@ import { PromptModal } from '@/components/prompt-modal';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { ACCENT_LABELS, ACCENTS, type AccentKey, Spacing } from '@/constants/theme';
+import { useAppLock } from '@/context/app-lock-context';
 import { useAuth } from '@/context/auth-context';
 import { type ThemePreference, useThemePreference } from '@/context/theme-context';
 import { useTheme } from '@/hooks/use-theme';
@@ -18,6 +19,7 @@ export default function SettingsScreen() {
   const theme = useTheme();
   const { user, signOut, linkPartner, updateName } = useAuth();
   const { preference, setPreference, accent, setAccent } = useThemePreference();
+  const { enabled: appLockEnabled, setEnabled: setAppLockEnabled } = useAppLock();
 
   const [pinSet, setPinSet] = useState(false);
   const [biometric, setBiometric] = useState<BiometricStatus | null>(null);
@@ -76,6 +78,22 @@ export default function SettingsScreen() {
     setPinSet(true);
     setShowPinModal(false);
     return true;
+  }
+
+  // "Face ID or your PIN" / "Face ID" / "your PIN" depending on what's set up.
+  const bioReady = biometric?.available && biometric?.enrolled ? biometric.label : null;
+  const appLockUnlockLabel =
+    bioReady && pinSet ? `${bioReady} or your PIN` : (bioReady ?? (pinSet ? 'your PIN' : 'a PIN'));
+
+  function toggleAppLock(next: boolean) {
+    if (next && !pinSet && !biometric?.available) {
+      Alert.alert(
+        'Set a PIN first',
+        'App Lock needs a PIN or biometrics. Set a PIN below, then turn App Lock on.',
+      );
+      return;
+    }
+    setAppLockEnabled(next);
   }
 
   function confirmRemovePin() {
@@ -196,6 +214,20 @@ export default function SettingsScreen() {
                       : 'Not set up in system settings'
               }
             />
+            <View style={styles.row}>
+              <Ionicons name="lock-closed-outline" size={22} color={theme.text} />
+              <View style={styles.rowText}>
+                <ThemedText>App Lock</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {`Require ${appLockUnlockLabel} to open DuoNotes`}
+                </ThemedText>
+              </View>
+              <Switch
+                value={appLockEnabled}
+                onValueChange={toggleAppLock}
+                trackColor={{ true: theme.accent }}
+              />
+            </View>
           </Section>
 
           <Section title="About">
