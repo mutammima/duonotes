@@ -77,7 +77,9 @@ export default function NoteEditorScreen() {
     (patch: { title?: string; body?: string }) => {
       pending.current = { ...pending.current, ...patch };
       if (saveTimer.current) clearTimeout(saveTimer.current);
-      saveTimer.current = setTimeout(flush, 700);
+      // Short debounce so edits reach the server (and the partner) quickly
+      // without hammering the DB on every keystroke.
+      saveTimer.current = setTimeout(flush, 300);
     },
     [flush],
   );

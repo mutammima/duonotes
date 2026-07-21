@@ -17,6 +17,7 @@
 import { randomUUID } from 'expo-crypto';
 import * as Network from 'expo-network';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 
 import { useAuth } from '@/context/auth-context';
 import { loadJSON, saveJSON, StorageKeys } from '@/lib/storage';
@@ -293,9 +294,36 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       if (online && !wasOnline) syncNowRef.current();
     });
 
+    // Realtime can silently go stale (dropped socket, backgrounded app, or the
+    // table simply not in the realtime publication). Two safety nets so a
+    // partner's new note / edit still shows up promptly:
+    //   1. Reconcile the instant we return to the foreground.
+    //   2. While foregrounded, poll on a short interval as a fallback.
+    const POLL_MS = 8000;
+    let poll: ReturnType<typeof setInterval> | null = null;
+    const startPolling = () => {
+      if (poll) return;
+      poll = setInterval(() => reconcileRef.current().catch(() => {}), POLL_MS);
+    };
+    const stopPolling = () => {
+      if (poll) clearInterval(poll);
+      poll = null;
+    };
+    const appStateSub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') {
+        syncNowRef.current();
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    });
+    if (AppState.currentState === 'active') startPolling();
+
     return () => {
       supabase.removeChannel(channel);
       subscription.remove();
+      appStateSub.remove();
+      stopPolling();
     };
   }, [uid]);
 

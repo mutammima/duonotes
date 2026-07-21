@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useState } from 'react';
 import { Keyboard, Platform, Pressable, StyleSheet, View } from 'react-native';
@@ -163,15 +164,21 @@ export function RichNoteEditor({
   async function pickImage() {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) return;
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 0.5,
+    // Deliberately DON'T pass base64 here: base64-encoding a full-resolution
+    // (12MP+) photo runs synchronously while the picker is still up, which
+    // freezes it on older phones so Cancel appears dead. Pick the URI, let the
+    // picker dismiss, then downscale + encode off its critical path — which
+    // also keeps note bodies small (faster to sync).
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'] });
+    const asset = result.assets?.[0];
+    if (result.canceled || !asset) return;
+
+    const edited = await ImageManipulator.manipulateAsync(asset.uri, [{ resize: { width: 1600 } }], {
+      compress: 0.6,
+      format: ImageManipulator.SaveFormat.JPEG,
       base64: true,
     });
-    const asset = result.assets?.[0];
-    if (!result.canceled && asset?.base64) {
-      editor.setImage(`data:image/jpeg;base64,${asset.base64}`);
-    }
+    if (edited.base64) editor.setImage(`data:image/jpeg;base64,${edited.base64}`);
   }
 
   return (
