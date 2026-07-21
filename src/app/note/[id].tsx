@@ -26,7 +26,7 @@ export default function NoteEditorScreen() {
   const theme = useTheme();
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { getNote, updateNote, deleteNote, toggleShared, setLock, loading } = useNotes();
+  const { getNote, updateNote, deleteNote, toggleShared, setLock, loading, markSeen } = useNotes();
   const { user } = useAuth();
 
   const note = getNote(id);
@@ -46,6 +46,12 @@ export default function NoteEditorScreen() {
   useEffect(() => {
     if (!loading && !note) router.back();
   }, [loading, note, router]);
+
+  // While this note is open you're by definition looking at it, so keep it
+  // marked read — including when a partner edit lands mid-view.
+  useEffect(() => {
+    if (note) markSeen(id);
+  }, [id, note?.updatedAt, markSeen, note]);
 
   // Sync local fields when a (different) note becomes available. Keyed on the
   // id only, so realtime refreshes of the same note never clobber typing.

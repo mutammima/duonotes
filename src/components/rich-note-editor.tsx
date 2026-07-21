@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import * as ImageManipulator from 'expo-image-manipulator';
+import { EncodingType, readAsStringAsync } from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useState } from 'react';
 import { Keyboard, Platform, Pressable, StyleSheet, View } from 'react-native';
@@ -40,6 +40,7 @@ export function RichNoteEditor({
   const insets = useSafeAreaInsets();
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [showDrawing, setShowDrawing] = useState(false);
+  const [toolbarHeight, setToolbarHeight] = useState(0);
 
   // Track keyboard height directly rather than relying on KeyboardAvoidingView,
   // whose automatic shift-up doesn't reliably reach an absolutely-positioned
@@ -166,26 +167,29 @@ export function RichNoteEditor({
     if (!permission.granted) return;
     // Deliberately DON'T pass base64 here: base64-encoding a full-resolution
     // (12MP+) photo runs synchronously while the picker is still up, which
-    // freezes it on older phones so Cancel appears dead. Pick the URI, let the
-    // picker dismiss, then downscale + encode off its critical path — which
-    // also keeps note bodies small (faster to sync).
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'] });
+    // freezes it on older phones so Cancel/X appears dead. `quality` still
+    // compresses the file the picker writes; we then read that file's base64
+    // after the picker has dismissed, off its critical path.
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 0.5,
+    });
     const asset = result.assets?.[0];
     if (result.canceled || !asset) return;
 
-    const edited = await ImageManipulator.manipulateAsync(asset.uri, [{ resize: { width: 1600 } }], {
-      compress: 0.6,
-      format: ImageManipulator.SaveFormat.JPEG,
-      base64: true,
-    });
-    if (edited.base64) editor.setImage(`data:image/jpeg;base64,${edited.base64}`);
+    const base64 = await readAsStringAsync(asset.uri, { encoding: EncodingType.Base64 });
+    if (base64) editor.setImage(`data:image/jpeg;base64,${base64}`);
   }
 
   return (
     <View style={styles.flex}>
-      <RichText editor={editor} />
+      <View style={[styles.flex, { paddingBottom: showDrawing ? 0 : keyboardHeight + toolbarHeight }]}>
+        <RichText editor={editor} />
+      </View>
       {!showDrawing && (
-        <View style={[styles.toolbar, { bottom: keyboardHeight, paddingBottom: keyboardHeight === 0 ? insets.bottom : 0 }]}>
+        <View
+          onLayout={(e) => setToolbarHeight(e.nativeEvent.layout.height)}
+          style={[styles.toolbar, { bottom: keyboardHeight, paddingBottom: keyboardHeight === 0 ? insets.bottom : 0 }]}>
           <View style={[styles.attachRow, { backgroundColor: theme.backgroundElement, borderColor: theme.backgroundSelected }]}>
             <Pressable onPress={pickImage} hitSlop={8} style={styles.attachButton}>
               <Ionicons name="image-outline" size={20} color={theme.text} />
@@ -201,6 +205,18 @@ export function RichNoteEditor({
               style={styles.attachButton}>
               <Ionicons name="brush-outline" size={20} color={theme.text} />
             </Pressable>
+            {keyboardHeight > 0 && (
+              <Pressable
+                onPress={() => {
+                  // Drop focus (and the keyboard) without leaving the note.
+                  editor.blur();
+                  Keyboard.dismiss();
+                }}
+                hitSlop={8}
+                style={[styles.attachButton, styles.dismissKeyboard]}>
+                <Ionicons name="chevron-down-circle-outline" size={22} color={theme.accent} />
+              </Pressable>
+            )}
           </View>
           <Toolbar editor={editor} hidden={false} />
         </View>
@@ -228,4 +244,5 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   attachButton: { padding: Spacing.one },
+  dismissKeyboard: { marginLeft: 'auto' },
 });

@@ -1,11 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, FlatList, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
+import { useNotes } from '@/context/notes-context';
 import { useTheme } from '@/hooks/use-theme';
 import { htmlToPlain } from '@/lib/markdown';
 import type { Note } from '@/lib/types';
@@ -112,7 +113,16 @@ function EmptyState({
 function NoteRow({ note }: { note: Note }) {
   const theme = useTheme();
   const router = useRouter();
+  const { deleteNote, isUnseen } = useNotes();
   const locked = note.lockType !== 'none';
+  const updated = isUnseen(note);
+
+  function confirmDelete() {
+    Alert.alert('Delete note?', 'This cannot be undone.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => deleteNote(note.id) },
+    ]);
+  }
 
   const preview = locked
     ? 'Locked — tap to unlock'
@@ -121,6 +131,8 @@ function NoteRow({ note }: { note: Note }) {
   return (
     <Pressable
       onPress={() => router.push({ pathname: '/note/[id]', params: { id: note.id } })}
+      onLongPress={confirmDelete}
+      delayLongPress={400}
       style={({ pressed }) => [
         styles.row,
         { backgroundColor: theme.backgroundElement, borderColor: theme.backgroundSelected },
@@ -140,6 +152,11 @@ function NoteRow({ note }: { note: Note }) {
         </View>
       </View>
       <View style={styles.badges}>
+        {updated && (
+          <View style={[styles.updatedDot, { backgroundColor: theme.accent }]}>
+            <Ionicons name="sparkles" size={11} color={theme.onAccent} />
+          </View>
+        )}
         {note.isShared && <Ionicons name="people" size={16} color={theme.textSecondary} />}
         {locked && (
           <Ionicons
@@ -191,6 +208,7 @@ const styles = StyleSheet.create({
   rowSubtitle: { flexDirection: 'row', gap: Spacing.two },
   preview: { flexShrink: 1 },
   badges: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
+  updatedDot: { width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.three, padding: Spacing.four },
   emptyBadge: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center' },
   emptyText: { textAlign: 'center', lineHeight: 22 },

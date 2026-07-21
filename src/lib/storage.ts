@@ -22,6 +22,7 @@ export const StorageKeys = {
   session: 'duonotes.session', // SecureStore
   pin: 'duonotes.pin', // SecureStore — JSON { salt, hash }
   appLock: 'duonotes.appLock', // AsyncStorage — boolean, gate the whole app behind PIN/biometric
+  seen: 'duonotes.seen', // AsyncStorage prefix — `${seen}.${userId}` -> { [noteId]: updatedAt }
 } as const;
 
 /* ------------------------------- AsyncStorage ------------------------------ */
