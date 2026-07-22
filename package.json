@@ -43,8 +43,13 @@
     "react-native-worklets": "0.10.0"
   },
   "devDependencies": {
+    "@tiptap/extension-gapcursor": "^3.27.4",
+    "@tiptap/react": "^3.27.4",
     "@types/react": "~19.2.2",
-    "typescript": "~6.0.3"
+    "@vitejs/plugin-react": "^5.2.0",
+    "typescript": "~6.0.3",
+    "vite": "^7.3.6",
+    "vite-plugin-singlefile": "^2.3.3"
   },
   "scripts": {
     "start": "expo start",
@@ -52,7 +57,8 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "ota": "eas update --channel production"
+    "ota": "eas update --channel production",
+    "build:editor": "bash scripts/build-editor.sh"
   },
   "private": true,
   "overrides": {
