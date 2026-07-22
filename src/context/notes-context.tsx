@@ -17,6 +17,7 @@
 import { randomUUID } from 'expo-crypto';
 import * as Network from 'expo-network';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 
 import { useAuth } from '@/context/auth-context';
 import { loadJSON, saveJSON, StorageKeys } from '@/lib/storage';
@@ -40,6 +41,11 @@ interface NotesContextValue {
   setLock: (id: string, lockType: LockType) => Promise<void>;
   /** Manually push pending changes and pull the latest from the server. */
   syncNow: () => Promise<void>;
+  /** True when the note changed (or arrived) since you last opened it — i.e.
+   *  your partner touched it. Your own edits mark themselves seen. */
+  isUnseen: (note: Note) => boolean;
+  /** Record the note as read up to its current `updatedAt`. */
+  markSeen: (id: string) => void;
 }
 
 const NotesContext = createContext<NotesContextValue | null>(null);
@@ -79,13 +85,50 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const syncNowRef = useRef<() => Promise<void>>(async () => {});
   const reconcileRef = useRef<() => Promise<void>>(async () => {});
 
+  // noteId -> the `updatedAt` you last saw. A note whose updatedAt is newer
+  // (or that has no entry at all, i.e. it just arrived) counts as unseen.
+  const [seen, setSeenState] = useState<Record<string, number>>({});
+  const seenRef = useRef<Record<string, number>>({});
+
   const notesKey = uid ? `${StorageKeys.notes}.${uid}` : null;
   const pendingKey = uid ? `${StorageKeys.pending}.${uid}` : null;
+  const seenKey = uid ? `${StorageKeys.seen}.${uid}` : null;
 
   const setNotes = useCallback((next: Note[]) => {
     notesRef.current = next;
     setNotesState(next);
   }, []);
+
+  const writeSeen = useCallback(
+    (next: Record<string, number>) => {
+      seenRef.current = next;
+      setSeenState(next);
+      if (seenKey) saveJSON(seenKey, next).catch(() => {});
+    },
+    [seenKey],
+  );
+
+  /** Mark a single note read up to its current updatedAt. */
+  const markSeen = useCallback(
+    (id: string) => {
+      const note = notesRef.current.find((n) => n.id === id);
+      if (!note) return;
+      if (seenRef.current[id] === note.updatedAt) return;
+      writeSeen({ ...seenRef.current, [id]: note.updatedAt });
+    },
+    [writeSeen],
+  );
+
+  /** Your own local edits shouldn't badge themselves as "partner updated". */
+  const touchSeen = useCallback(
+    (id: string, ts: number) => writeSeen({ ...seenRef.current, [id]: ts }),
+    [writeSeen],
+  );
+
+  const isUnseen = useCallback(
+    (note: Note) => (seen[note.id] ?? -1) < note.updatedAt,
+    [seen],
+  );
 
   const refreshPendingCount = useCallback(() => {
     setPendingCount(dirtyRef.current.size + deletedRef.current.size);
@@ -251,6 +294,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       const cached = await loadJSON<Note[]>(`${StorageKeys.notes}.${uid}`, []);
       const queue = await loadJSON<PendingQueue>(`${StorageKeys.pending}.${uid}`, { dirty: [], deleted: [] });
+      const storedSeen = await loadJSON<Record<string, number> | null>(`${StorageKeys.seen}.${uid}`, null);
       if (!active) return;
 
       dirtyRef.current = new Set(queue.dirty);
@@ -258,6 +302,18 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       refreshPendingCount();
       setNotes(cached);
       setLoading(false);
+
+      // First run on this device: treat everything already here as read, so
+      // the list doesn't light up with "updated" badges on existing notes.
+      if (storedSeen) {
+        seenRef.current = storedSeen;
+        setSeenState(storedSeen);
+      } else {
+        const baseline = Object.fromEntries(cached.map((n) => [n.id, n.updatedAt]));
+        seenRef.current = baseline;
+        setSeenState(baseline);
+        saveJSON(`${StorageKeys.seen}.${uid}`, baseline).catch(() => {});
+      }
 
       const online = await probeOnline();
       if (!active) return;
@@ -293,9 +349,36 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       if (online && !wasOnline) syncNowRef.current();
     });
 
+    // Realtime can silently go stale (dropped socket, backgrounded app, or the
+    // table simply not in the realtime publication). Two safety nets so a
+    // partner's new note / edit still shows up promptly:
+    //   1. Reconcile the instant we return to the foreground.
+    //   2. While foregrounded, poll on a short interval as a fallback.
+    const POLL_MS = 8000;
+    let poll: ReturnType<typeof setInterval> | null = null;
+    const startPolling = () => {
+      if (poll) return;
+      poll = setInterval(() => reconcileRef.current().catch(() => {}), POLL_MS);
+    };
+    const stopPolling = () => {
+      if (poll) clearInterval(poll);
+      poll = null;
+    };
+    const appStateSub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') {
+        syncNowRef.current();
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    });
+    if (AppState.currentState === 'active') startPolling();
+
     return () => {
       supabase.removeChannel(channel);
       subscription.remove();
+      appStateSub.remove();
+      stopPolling();
     };
   }, [uid]);
 
@@ -318,20 +401,23 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     const next = [note, ...notesRef.current];
     setNotes(next);
     await persistCache(next);
+    touchSeen(note.id, note.updatedAt);
     await markDirty(note.id);
     void syncNow();
     return note;
-  }, [user, setNotes, persistCache, markDirty, syncNow]);
+  }, [user, setNotes, persistCache, markDirty, syncNow, touchSeen]);
 
   const updateNote = useCallback<NotesContextValue['updateNote']>(
     async (id, patch) => {
-      const next = notesRef.current.map((n) => (n.id === id ? { ...n, ...patch, updatedAt: Date.now() } : n));
+      const ts = Date.now();
+      const next = notesRef.current.map((n) => (n.id === id ? { ...n, ...patch, updatedAt: ts } : n));
       setNotes(next);
       await persistCache(next);
+      touchSeen(id, ts);
       await markDirty(id);
       void syncNow();
     },
-    [setNotes, persistCache, markDirty, syncNow],
+    [setNotes, persistCache, markDirty, syncNow, touchSeen],
   );
 
   const deleteNote = useCallback(
@@ -352,26 +438,30 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     async (id: string) => {
       const current = notesRef.current.find((n) => n.id === id);
       if (!current) return;
+      const now = Date.now();
       const next = notesRef.current.map((n) =>
-        n.id === id ? { ...n, isShared: !current.isShared, updatedAt: Date.now() } : n,
+        n.id === id ? { ...n, isShared: !current.isShared, updatedAt: now } : n,
       );
       setNotes(next);
       await persistCache(next);
+      touchSeen(id, now);
       await markDirty(id);
       void syncNow();
     },
-    [setNotes, persistCache, markDirty, syncNow],
+    [setNotes, persistCache, markDirty, syncNow, touchSeen],
   );
 
   const setLock = useCallback<NotesContextValue['setLock']>(
     async (id, lockType) => {
-      const next = notesRef.current.map((n) => (n.id === id ? { ...n, lockType, updatedAt: Date.now() } : n));
+      const ts = Date.now();
+      const next = notesRef.current.map((n) => (n.id === id ? { ...n, lockType, updatedAt: ts } : n));
       setNotes(next);
       await persistCache(next);
+      touchSeen(id, ts);
       await markDirty(id);
       void syncNow();
     },
-    [setNotes, persistCache, markDirty, syncNow],
+    [setNotes, persistCache, markDirty, syncNow, touchSeen],
   );
 
   const myNotes = useMemo(
@@ -395,6 +485,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       toggleShared,
       setLock,
       syncNow,
+      isUnseen,
+      markSeen,
     }),
     [
       notes,
@@ -410,6 +502,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       toggleShared,
       setLock,
       syncNow,
+      isUnseen,
+      markSeen,
     ],
   );
 
