@@ -47,3 +47,6 @@ example
 *.ipa
 /build
 /Payload
+
+# built output of the custom editor web bundle (regenerate: npm run build:editor)
+web-editor/dist

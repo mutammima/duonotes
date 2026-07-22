@@ -15,6 +15,7 @@ import {
 
 import { DrawingCanvas } from '@/components/drawing-canvas';
 import { Spacing } from '@/constants/theme';
+import { editorHtml } from '@/lib/editor-html';
 import { useTheme } from '@/hooks/use-theme';
 
 /**
@@ -82,6 +83,12 @@ export function RichNoteEditor({
     avoidIosKeyboard: true,
     initialContent: initialHtml || '',
     theme: editorTheme,
+    // Our own editor bundle (web-editor/, built by `npm run build:editor`)
+    // instead of tentap's prebuilt one. Phase 1 is byte-for-byte the same
+    // extension set, so this is a no-op for users — it exists so we can add
+    // custom nodes/plugins (drawing, partner cursors) that the prebuilt
+    // bundle gives no way to inject.
+    customSource: editorHtml,
   });
 
   const content = useEditorContent(editor, { type: 'html', debounceInterval: 500 });
