@@ -1,14 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Canvas, Path, Skia, useCanvasRef, type SkPath } from '@shopify/react-native-skia';
-import { useMemo, useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { BackHandler, Pressable, StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ThemedText } from '@/components/themed-text';
 import { ACCENTS, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import type { DrawingAttrs } from '@/lib/drawing-bridge';
+import type { DrawingInsertPayload } from '@/lib/drawing-bridge';
 
 const STROKE_WIDTHS = [3, 6, 10];
 
@@ -24,24 +23,38 @@ function pathFromPoints(points: Point[]) {
 }
 
 /**
- * Freehand sketch overlay. A transparent Skia canvas layers directly on top
- * of the note's RichText WebView (rendered as a later sibling in
+ * Freehand sketch overlay, styled after Apple Notes' own markup tool: no
+ * separate Cancel/Sketch/Done bar — the pen toggle that opened this (in
+ * RichNoteEditor's toolbar) is mirrored here as the leftmost bottom-bar
+ * button, and tapping it again commits whatever was drawn (or exits cleanly
+ * if nothing was) via `onExit`. A transparent Skia canvas layers directly on
+ * top of the note's RichText WebView (rendered as a later sibling in
  * RichNoteEditor) so the existing text/images stay visible while drawing —
  * ink can be aligned against specific words instead of sketching on a blank
- * surface. Tap Done to flatten the strokes into a transparent PNG data URI,
- * which the caller inserts at the cursor the same way as a picked photo
- * (`editor.setImage(...)`).
+ * surface.
  *
  * The parent mounts this only while sketching, so every open starts from a
  * fresh instance — no strokes carried over, and the default ink color
  * re-initialises to one that's visible against the current theme.
+ *
+ * Note: any top-anchored element added here must NOT call
+ * `useSafeAreaInsets().top` — the ancestor SafeAreaView (note/[id].tsx) has
+ * already applied that inset once for the whole screen; double-applying it
+ * is what used to push a since-removed header bar down with an empty gap
+ * above it.
  */
 export function DrawingCanvas({
-  onCancel,
-  onSave,
+  onExit,
+  anchorOffset,
 }: {
-  onCancel: () => void;
-  onSave: (drawing: DrawingAttrs) => void;
+  onExit: (drawing: DrawingInsertPayload | null) => void;
+  /** This canvas's own screen position relative to the note's RichText
+   *  WebView, in RN points (from RichNoteEditor's `measureInWindow` on both).
+   *  Since this canvas otherwise renders as an absolute-fill overlay with no
+   *  header above it, its own (0,0) is that WebView's (0,0) MINUS this offset
+   *  — used to translate a stroke's on-screen position into a WebView-local
+   *  coordinate the web bridge can resolve with `posAtCoords`. */
+  anchorOffset: { x: number; y: number };
 }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -72,8 +85,22 @@ export function DrawingCanvas({
     [color, strokeWidth],
   );
 
-  function handleDone() {
-    if (strokes.length === 0) return;
+  // Android hardware back should behave like tapping the pen toggle again
+  // (commit-and-exit), not fall through to the note screen's own back nav.
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleExit();
+      return true;
+    });
+    return () => sub.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strokes]);
+
+  function handleExit() {
+    if (strokes.length === 0) {
+      onExit(null);
+      return;
+    }
 
     // Crop to the ink's bounding box so the drawing lands at the size it was
     // actually drawn, and translate points into that box's own coordinate
@@ -91,7 +118,18 @@ export function DrawingCanvas({
         bottom = Math.max(bottom, p.y + pad);
       }
     }
-    if (!Number.isFinite(left) || right <= left || bottom <= top) return;
+    if (!Number.isFinite(left) || right <= left || bottom <= top) {
+      onExit(null);
+      return;
+    }
+
+    // The ink's own bbox center, in THIS canvas's local coordinate space —
+    // still untranslated at this point (the crop-into-0..w/0..h step below is
+    // for the exported SVG only). Corrected by `anchorOffset` because this
+    // canvas has no header of its own to offset against; its (0,0) sits
+    // `anchorOffset` away from the WebView's (0,0) that the web bridge's
+    // `posAtCoords` call actually needs coordinates relative to.
+    const anchor = { x: (left + right) / 2 - anchorOffset.x, y: (top + bottom) / 2 - anchorOffset.y };
 
     const w = Math.max(1, Math.ceil(right - left));
     const h = Math.max(1, Math.ceil(bottom - top));
@@ -102,37 +140,12 @@ export function DrawingCanvas({
       w: s.width,
     }));
 
-    onSave({ strokes: serialized, w, h });
+    onExit({ strokes: serialized, w, h, anchor });
     setStrokes([]);
   }
 
   return (
     <View style={StyleSheet.absoluteFill}>
-      <View
-        style={[
-          styles.header,
-          { backgroundColor: theme.backgroundElement, paddingTop: insets.top + Spacing.two },
-        ]}>
-        <Pressable
-          onPress={() => {
-            setStrokes([]);
-            onCancel();
-          }}
-          hitSlop={10}>
-          <ThemedText type="link" style={{ color: theme.accent }}>
-            Cancel
-          </ThemedText>
-        </Pressable>
-        <ThemedText type="smallBold">Sketch</ThemedText>
-        <Pressable onPress={handleDone} hitSlop={10} disabled={strokes.length === 0}>
-          <ThemedText
-            type="link"
-            style={{ color: strokes.length === 0 ? theme.textSecondary : theme.accent }}>
-            Done
-          </ThemedText>
-        </Pressable>
-      </View>
-
       <GestureDetector gesture={pan}>
         <Canvas ref={canvasRef} style={styles.canvas}>
           {strokes.map((s, i) => (
@@ -200,6 +213,16 @@ export function DrawingCanvas({
             ))}
           </View>
           <View style={styles.actionsRow}>
+            {/* This button only ever renders while sketching is active, so it's
+                permanently shown in its "on" look — matching Ionicons'
+                outline/filled convention this app already uses elsewhere
+                (e.g. people / people-outline). */}
+            <Pressable
+              onPress={handleExit}
+              hitSlop={8}
+              style={[styles.penButton, { backgroundColor: theme.accentSoft }]}>
+              <Ionicons name="brush" size={22} color={theme.accent} />
+            </Pressable>
             <Pressable
               onPress={() => setStrokes((s) => s.slice(0, -1))}
               disabled={strokes.length === 0}
@@ -230,13 +253,6 @@ export function DrawingCanvas({
 }
 
 const styles = StyleSheet.create({
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingBottom: Spacing.two,
-  },
   canvas: { flex: 1 },
   toolbar: {
     borderTopWidth: StyleSheet.hairlineWidth,
@@ -250,4 +266,5 @@ const styles = StyleSheet.create({
   widthRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   widthDotWrap: { alignItems: 'center', justifyContent: 'center', width: 28, height: 28 },
   actionButton: { padding: Spacing.one },
+  penButton: { padding: Spacing.one, borderRadius: 999 },
 });

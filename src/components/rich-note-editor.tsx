@@ -1,11 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import { EncodingType, readAsStringAsync } from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
-import { useEffect, useState } from 'react';
-import { Keyboard, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import { Keyboard, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import type { WebViewMessageEvent } from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
+  CoreEditorActionType,
   defaultEditorTheme,
   RichText,
   TenTapStartKit,
@@ -35,15 +38,27 @@ import { useTheme } from '@/hooks/use-theme';
 export function RichNoteEditor({
   initialHtml,
   onChangeHtml,
+  children,
 }: {
   initialHtml: string;
   onChangeHtml: (html: string) => void;
+  /** Rendered above the note body, INSIDE the same scrollable region — so it
+   *  scrolls away with the body instead of staying pinned (e.g. the note's
+   *  Title input + shared banner, owned by the screen that renders us). */
+  children?: ReactNode;
 }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [showDrawing, setShowDrawing] = useState(false);
   const [toolbarHeight, setToolbarHeight] = useState(0);
+  const [anchorOffset, setAnchorOffset] = useState({ x: 0, y: 0 });
+  const scrollRef = useRef<ScrollView>(null);
+  const rootRef = useRef<View>(null);
+  const richTextWrapperRef = useRef<View>(null);
+  // Set while waiting for the keyboard to fully close before opening
+  // DrawingCanvas — see `openDrawing` below.
+  const pendingOpenRef = useRef(false);
 
   // Track keyboard height directly rather than relying on KeyboardAvoidingView,
   // whose automatic shift-up doesn't reliably reach an absolutely-positioned
@@ -58,6 +73,40 @@ export function RichNoteEditor({
       onHide.remove();
     };
   }, []);
+
+  // A tap on the brush icon calls `editor.blur()` immediately (to dismiss the
+  // keyboard), but the keyboard's own dismiss animation is asynchronous — if
+  // we measured and opened DrawingCanvas right away, the measurement would be
+  // taken against a screen that's mid-animation and about to resize. Wait for
+  // `keyboardHeight` (the already-tracked, real signal for "the keyboard has
+  // actually finished closing") to settle at 0 before measuring.
+  useEffect(() => {
+    if (pendingOpenRef.current && keyboardHeight === 0) {
+      pendingOpenRef.current = false;
+      measureAndShowDrawing();
+    }
+  }, [keyboardHeight]);
+
+  function measureAndShowDrawing() {
+    rootRef.current?.measureInWindow((rootX, rootY) => {
+      richTextWrapperRef.current?.measureInWindow((rtX, rtY) => {
+        setAnchorOffset({ x: rtX - rootX, y: rtY - rootY });
+        setShowDrawing(true);
+      });
+    });
+  }
+
+  function openDrawing() {
+    // Dismiss the keyboard/editor focus first — the sketch overlay takes
+    // over the same screen space, not a separate modal.
+    editor.blur();
+    if (keyboardHeight === 0) {
+      measureAndShowDrawing();
+    } else {
+      pendingOpenRef.current = true;
+      Keyboard.dismiss();
+    }
+  }
 
   // The toolbar CHROME (icons/background) is a separate theme from the
   // in-document CSS injected below — override it here so it matches the app
@@ -83,6 +132,12 @@ export function RichNoteEditor({
   const editor = useEditorBridge({
     autofocus: false,
     avoidIosKeyboard: true,
+    // Size the WebView to its real content height instead of flex-filling the
+    // screen, so it has nothing left to scroll internally — the outer
+    // ScrollView below becomes the ONE scroll container for Title+banner+body,
+    // unifying them into a single continuous page (Apple Notes-style) instead
+    // of the note body scrolling independently underneath a fixed header.
+    dynamicHeight: true,
     initialContent: initialHtml || '',
     theme: editorTheme,
     // Our own editor bundle (web-editor/, built by `npm run build:editor`)
@@ -176,6 +231,28 @@ export function RichNoteEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [theme.background, theme.text, theme.accent, theme.textSecondary, theme.backgroundElement, theme.backgroundSelected]);
 
+  // `dynamicHeight` (above) removes the WebView's own internal scroll, which
+  // is what tentap's `avoidIosKeyboard` normally relies on to keep the typing
+  // caret visible above the keyboard — with nothing scrollable left inside
+  // the document, that mechanism goes inert. This covers the common case
+  // (typing at the end of the note): whenever the editor's real content
+  // height changes while the keyboard is up, follow it to the bottom of the
+  // now-taller ScrollView. Precise mid-document caret-following would need a
+  // dedicated caret-position bridge — not built yet; see if this heuristic
+  // proves sufficient on a real device first.
+  const handleRichTextMessage = (event: WebViewMessageEvent) => {
+    if (typeof event.nativeEvent.data !== 'string') return;
+    let message: { type?: string } = {};
+    try {
+      message = JSON.parse(event.nativeEvent.data);
+    } catch {
+      return;
+    }
+    if (message.type === CoreEditorActionType.DocumentHeight && keyboardHeight > 0 && !showDrawing) {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    }
+  };
+
   async function pickImage() {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) return;
@@ -196,10 +273,32 @@ export function RichNoteEditor({
   }
 
   return (
-    <View style={styles.flex}>
-      <View style={[styles.flex, { paddingBottom: showDrawing ? 0 : keyboardHeight + toolbarHeight }]}>
-        <RichText editor={editor} />
-      </View>
+    <View style={styles.flex} ref={rootRef}>
+      <ScrollView
+        ref={scrollRef}
+        style={styles.flex}
+        contentContainerStyle={{ paddingBottom: showDrawing ? 0 : keyboardHeight + toolbarHeight }}
+        // Apple Notes locks the page while its markup tool is active; this
+        // also keeps the scroll offset stable for the duration of a sketch,
+        // which matters once a drawing's screen position needs to map back
+        // to a document position (see DrawingCanvas/onExit).
+        scrollEnabled={!showDrawing}
+        keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets={false}>
+        {children}
+        <View ref={richTextWrapperRef}>
+          <RichText
+            editor={editor}
+            onMessage={handleRichTextMessage}
+            // RichText's own onMessage handling (which reads the
+            // 'document-height' message to size the WebView for dynamicHeight)
+            // is SKIPPED whenever a custom onMessage is passed, unless this is
+            // explicitly set to false — easy to miss, and silently breaks
+            // dynamicHeight (the WebView would never resize) if forgotten.
+            exclusivelyUseCustomOnMessage={false}
+          />
+        </View>
+      </ScrollView>
       {!showDrawing && (
         <View
           onLayout={(e) => setToolbarHeight(e.nativeEvent.layout.height)}
@@ -208,15 +307,7 @@ export function RichNoteEditor({
             <Pressable onPress={pickImage} hitSlop={8} style={styles.attachButton}>
               <Ionicons name="image-outline" size={20} color={theme.text} />
             </Pressable>
-            <Pressable
-              onPress={() => {
-                // Dismiss the keyboard/editor focus first — the sketch overlay
-                // takes over the same screen space, not a separate modal.
-                editor.blur();
-                setShowDrawing(true);
-              }}
-              hitSlop={8}
-              style={styles.attachButton}>
+            <Pressable onPress={openDrawing} hitSlop={8} style={styles.attachButton}>
               <Ionicons name="brush-outline" size={20} color={theme.text} />
             </Pressable>
             {keyboardHeight > 0 && (
@@ -237,9 +328,9 @@ export function RichNoteEditor({
       )}
       {showDrawing && (
         <DrawingCanvas
-          onCancel={() => setShowDrawing(false)}
-          onSave={(drawing) => {
-            editor.setDrawing(drawing);
+          anchorOffset={anchorOffset}
+          onExit={(drawing) => {
+            if (drawing) editor.setDrawing(drawing);
             setShowDrawing(false);
           }}
         />

@@ -40,6 +40,10 @@ export const Drawing = Node.create({
   draggable: true,
   selectable: true,
 
+  // Note: `anchor` (see drawing-bridge.ts's DrawingInsertPayload) is
+  // deliberately NOT an attribute here — it's transient insert-time metadata
+  // (where to place the node), stripped out before this schema ever sees it,
+  // never persisted.
   addAttributes() {
     return {
       strokes: {
