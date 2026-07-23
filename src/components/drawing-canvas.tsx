@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Canvas, ImageFormat, Path, Skia, useCanvasRef, type SkPath } from '@shopify/react-native-skia';
-import { useEffect, useMemo, useState } from 'react';
+import { Canvas, Path, Skia, useCanvasRef, type SkPath } from '@shopify/react-native-skia';
+import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,11 +8,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ACCENTS, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import type { DrawingAttrs } from '@/lib/drawing-bridge';
 
 const STROKE_WIDTHS = [3, 6, 10];
 
 type Point = { x: number; y: number };
-type Stroke = { path: SkPath; color: string; width: number };
+type Stroke = { path: SkPath; points: Point[]; color: string; width: number };
 
 function pathFromPoints(points: Point[]) {
   const path = Skia.Path.Make();
@@ -30,15 +31,17 @@ function pathFromPoints(points: Point[]) {
  * surface. Tap Done to flatten the strokes into a transparent PNG data URI,
  * which the caller inserts at the cursor the same way as a picked photo
  * (`editor.setImage(...)`).
+ *
+ * The parent mounts this only while sketching, so every open starts from a
+ * fresh instance — no strokes carried over, and the default ink color
+ * re-initialises to one that's visible against the current theme.
  */
 export function DrawingCanvas({
-  visible,
   onCancel,
   onSave,
 }: {
-  visible: boolean;
   onCancel: () => void;
-  onSave: (dataUri: string) => void;
+  onSave: (drawing: DrawingAttrs) => void;
 }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -48,13 +51,6 @@ export function DrawingCanvas({
   const [color, setColor] = useState<string>(theme.text);
   const [strokeWidth, setStrokeWidth] = useState(STROKE_WIDTHS[1]);
   const [currentPoints, setCurrentPoints] = useState<Point[]>([]);
-
-  // Reset to a fresh sketch — and a default ink color that's actually visible
-  // against the current theme — every time the overlay opens.
-  useEffect(() => {
-    if (visible) setColor(theme.text);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible]);
 
   // Functional state updates throughout, so this never needs `currentPoints`
   // itself in its dependency array — memoizing on just [color, strokeWidth]
@@ -68,7 +64,7 @@ export function DrawingCanvas({
         .onEnd(() =>
           setCurrentPoints((pts) => {
             if (pts.length > 0) {
-              setStrokes((s) => [...s, { path: pathFromPoints(pts), color, width: strokeWidth }]);
+              setStrokes((s) => [...s, { path: pathFromPoints(pts), points: pts, color, width: strokeWidth }]);
             }
             return [];
           }),
@@ -77,58 +73,38 @@ export function DrawingCanvas({
   );
 
   function handleDone() {
-    // Crop the export to the ink's bounding box — a full-canvas, mostly
-    // transparent PNG reads as a huge empty block once inserted in the note,
-    // while a tight crop drops in at the size it was actually drawn. No
-    // background fill: the export stays transparent so only the ink shows.
+    if (strokes.length === 0) return;
+
+    // Crop to the ink's bounding box so the drawing lands at the size it was
+    // actually drawn, and translate points into that box's own coordinate
+    // space so the exported SVG viewBox starts at 0,0.
     let left = Infinity;
     let top = Infinity;
     let right = -Infinity;
     let bottom = -Infinity;
     for (const s of strokes) {
-      const b = s.path.getBounds();
-      // Ink extends half the stroke width past the path centerline (round
-      // caps included), plus a hair of margin so nothing kisses the edge.
-      const pad = s.width / 2 + 2;
-      left = Math.min(left, b.x - pad);
-      top = Math.min(top, b.y - pad);
-      right = Math.max(right, b.x + b.width + pad);
-      bottom = Math.max(bottom, b.y + b.height + pad);
-    }
-    if (right <= left || bottom <= top) return;
-    const x = Math.max(0, left);
-    const y = Math.max(0, top);
-    const w = Math.ceil(right - x);
-    const h = Math.ceil(bottom - y);
-
-    const snapshot = canvasRef.current?.makeImageSnapshot(Skia.XYWHRect(x, y, w, h));
-    if (!snapshot) return;
-
-    // The snapshot can come back in physical pixels (3x on modern iPhones),
-    // but the note's WebView renders an <img> at 1 CSS px per image px —
-    // exported as-is the sketch would land ~3x larger than it was drawn.
-    // Resample to logical-point dimensions when the two disagree.
-    let image = snapshot;
-    if (snapshot.width() !== w) {
-      const surface = Skia.Surface.Make(w, h);
-      if (surface) {
-        surface
-          .getCanvas()
-          .drawImageRect(
-            snapshot,
-            Skia.XYWHRect(0, 0, snapshot.width(), snapshot.height()),
-            Skia.XYWHRect(0, 0, w, h),
-            Skia.Paint(),
-          );
-        image = surface.makeImageSnapshot();
+      const pad = s.width / 2 + 2; // round caps extend past the centerline
+      for (const p of s.points) {
+        left = Math.min(left, p.x - pad);
+        top = Math.min(top, p.y - pad);
+        right = Math.max(right, p.x + pad);
+        bottom = Math.max(bottom, p.y + pad);
       }
     }
+    if (!Number.isFinite(left) || right <= left || bottom <= top) return;
 
-    onSave(`data:image/png;base64,${image.encodeToBase64(ImageFormat.PNG)}`);
+    const w = Math.max(1, Math.ceil(right - left));
+    const h = Math.max(1, Math.ceil(bottom - top));
+    const serialized = strokes.map((s) => ({
+      // 1 decimal is well below what's visible and keeps the note body small.
+      d: s.points.map((p) => `${(p.x - left).toFixed(1)},${(p.y - top).toFixed(1)}`).join(' '),
+      c: s.color,
+      w: s.width,
+    }));
+
+    onSave({ strokes: serialized, w, h });
     setStrokes([]);
   }
-
-  if (!visible) return null;
 
   return (
     <View style={StyleSheet.absoluteFill}>

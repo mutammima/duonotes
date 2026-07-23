@@ -50,3 +50,5 @@ example
 
 # built output of the custom editor web bundle (regenerate: npm run build:editor)
 web-editor/dist
+# debug harness output (regenerate: npm run build:editor:dev) — see web-editor/index.dev.tsx
+web-editor/dist-dev
