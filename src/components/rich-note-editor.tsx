@@ -56,9 +56,14 @@ export function RichNoteEditor({
   const scrollRef = useRef<ScrollView>(null);
   const rootRef = useRef<View>(null);
   const richTextWrapperRef = useRef<View>(null);
+  const [headerHeight, setHeaderHeight] = useState(0);
+  const [scrollViewHeight, setScrollViewHeight] = useState(0);
   // Set while waiting for the keyboard to fully close before opening
   // DrawingCanvas — see `openDrawing` below.
   const pendingOpenRef = useRef(false);
+  // Mirrors `keyboardHeight > 0`, but as a ref so `openDrawing` can read the
+  // CURRENT value synchronously without depending on a stale closure.
+  const keyboardVisibleRef = useRef(false);
 
   // Track keyboard height directly rather than relying on KeyboardAvoidingView,
   // whose automatic shift-up doesn't reliably reach an absolutely-positioned
@@ -66,26 +71,46 @@ export function RichNoteEditor({
   useEffect(() => {
     const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const onShow = Keyboard.addListener(showEvt, (e) => setKeyboardHeight(e.endCoordinates.height));
-    const onHide = Keyboard.addListener(hideEvt, () => setKeyboardHeight(0));
+    const onShow = Keyboard.addListener(showEvt, (e) => {
+      keyboardVisibleRef.current = true;
+      setKeyboardHeight(e.endCoordinates.height);
+    });
+    const onHide = Keyboard.addListener(hideEvt, () => {
+      keyboardVisibleRef.current = false;
+      setKeyboardHeight(0);
+    });
+    // `keyboardDidHide` (unlike the Will-event above, used for snappy visual
+    // repositioning) fires only once the OS has ACTUALLY finished the dismiss
+    // animation — the only reliable signal that layout has settled, which the
+    // screen measurement below needs to be correct. Measuring against
+    // `keyboardWillHide` instead (which fires at the START of the dismiss
+    // animation) was the bug: a drawing made right after typing could land at
+    // the wrong spot, because the measurement raced the still-animating
+    // keyboard-dismiss/re-layout.
+    const onDidHide = Keyboard.addListener('keyboardDidHide', () => {
+      if (pendingOpenRef.current) {
+        pendingOpenRef.current = false;
+        settleThenMeasure();
+      }
+    });
     return () => {
       onShow.remove();
       onHide.remove();
+      onDidHide.remove();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // A tap on the brush icon calls `editor.blur()` immediately (to dismiss the
-  // keyboard), but the keyboard's own dismiss animation is asynchronous — if
-  // we measured and opened DrawingCanvas right away, the measurement would be
-  // taken against a screen that's mid-animation and about to resize. Wait for
-  // `keyboardHeight` (the already-tracked, real signal for "the keyboard has
-  // actually finished closing") to settle at 0 before measuring.
-  useEffect(() => {
-    if (pendingOpenRef.current && keyboardHeight === 0) {
-      pendingOpenRef.current = false;
-      measureAndShowDrawing();
-    }
-  }, [keyboardHeight]);
+  function settleThenMeasure() {
+    // A single frame after `keyboardDidHide` isn't always enough — the event
+    // itself can still land a frame or two before RN's own layout pass has
+    // caught up with the resulting re-render. Two back-to-back frames is the
+    // same "wait for native layout to actually settle" workaround already
+    // used elsewhere in this file (the staggered CSS-injection retries) for
+    // the same root cause: there's no single native "layout is now final"
+    // event to await instead.
+    requestAnimationFrame(() => requestAnimationFrame(measureAndShowDrawing));
+  }
 
   function measureAndShowDrawing() {
     rootRef.current?.measureInWindow((rootX, rootY) => {
@@ -100,8 +125,8 @@ export function RichNoteEditor({
     // Dismiss the keyboard/editor focus first — the sketch overlay takes
     // over the same screen space, not a separate modal.
     editor.blur();
-    if (keyboardHeight === 0) {
-      measureAndShowDrawing();
+    if (!keyboardVisibleRef.current) {
+      settleThenMeasure();
     } else {
       pendingOpenRef.current = true;
       Keyboard.dismiss();
@@ -237,19 +262,36 @@ export function RichNoteEditor({
   // the document, that mechanism goes inert. This covers the common case
   // (typing at the end of the note): whenever the editor's real content
   // height changes while the keyboard is up, follow it to the bottom of the
-  // now-taller ScrollView. Precise mid-document caret-following would need a
+  // real content. Precise mid-document caret-following would need a
   // dedicated caret-position bridge — not built yet; see if this heuristic
   // proves sufficient on a real device first.
   const handleRichTextMessage = (event: WebViewMessageEvent) => {
     if (typeof event.nativeEvent.data !== 'string') return;
-    let message: { type?: string } = {};
+    let message: { type?: string; payload?: unknown } = {};
     try {
       message = JSON.parse(event.nativeEvent.data);
     } catch {
       return;
     }
-    if (message.type === CoreEditorActionType.DocumentHeight && keyboardHeight > 0 && !showDrawing) {
-      scrollRef.current?.scrollToEnd({ animated: true });
+    if (
+      message.type === CoreEditorActionType.DocumentHeight &&
+      typeof message.payload === 'number' &&
+      keyboardHeight > 0 &&
+      !showDrawing
+    ) {
+      // `scrollToEnd()` was the original fix here, but it scrolls to the end
+      // of the ScrollView's FULL content — including the keyboard-avoidance
+      // padding below the real editor (contentContainerStyle's
+      // paddingBottom, easily 300-450pt). That overshoots PAST the actual
+      // last line of text into blank space, leaving the line you just typed
+      // sitting near the TOP of the visible area instead of just above the
+      // keyboard. Scroll only far enough to reveal the real content's bottom
+      // edge (headerHeight + editorHeight) within the space actually visible
+      // above the keyboard/toolbar — never into the padding.
+      const editorHeight = message.payload;
+      const visibleHeight = scrollViewHeight - keyboardHeight - toolbarHeight;
+      const targetY = Math.max(0, headerHeight + editorHeight - visibleHeight);
+      scrollRef.current?.scrollTo({ y: targetY, animated: true });
     }
   };
 
@@ -277,6 +319,7 @@ export function RichNoteEditor({
       <ScrollView
         ref={scrollRef}
         style={styles.flex}
+        onLayout={(e) => setScrollViewHeight(e.nativeEvent.layout.height)}
         contentContainerStyle={{ paddingBottom: showDrawing ? 0 : keyboardHeight + toolbarHeight }}
         // Apple Notes locks the page while its markup tool is active; this
         // also keeps the scroll offset stable for the duration of a sketch,
@@ -285,7 +328,7 @@ export function RichNoteEditor({
         scrollEnabled={!showDrawing}
         keyboardShouldPersistTaps="handled"
         automaticallyAdjustKeyboardInsets={false}>
-        {children}
+        <View onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}>{children}</View>
         <View ref={richTextWrapperRef}>
           <RichText
             editor={editor}

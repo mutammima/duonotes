@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, AppState, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { LinkPartnerSheet } from '@/components/link-partner-sheet';
@@ -63,6 +63,37 @@ export default function NoteEditorScreen() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [note?.id]);
+
+  // Once unlocked, `unlocked` stayed true for the rest of this screen's
+  // lifetime — so if you background the app WHILE a locked note is open (the
+  // common case: you unlocked it, then swiped to the app switcher), its real
+  // content stayed on screen and iOS's switcher snapshot captured it in
+  // plaintext. Re-lock immediately on 'inactive' (which fires before
+  // 'background' and before that snapshot is taken — same reasoning as
+  // AppLockGate) so a locked note is NEVER what's visible when you swipe out,
+  // independent of whether the separate whole-app App Lock setting is on.
+  useEffect(() => {
+    if (!locked) return;
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next !== 'active') setUnlocked(false);
+    });
+    return () => sub.remove();
+  }, [locked]);
+
+  // Covers the OTHER half of "re-lock when I leave" — navigating back to the
+  // list rather than backgrounding the app. A stack screen normally unmounts
+  // on pop (which would already reset `unlocked` fresh next time), but that's
+  // an implementation detail of the navigator, not a guarantee this
+  // security-sensitive reset should depend on — `useFocusEffect`'s cleanup
+  // (fired on blur) re-locks explicitly, regardless of whether this screen
+  // happens to unmount or gets frozen/kept alive by the navigator.
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        if (locked) setUnlocked(false);
+      };
+    }, [locked]),
+  );
 
   // Debounce writes so we don't hit the database on every keystroke.
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
