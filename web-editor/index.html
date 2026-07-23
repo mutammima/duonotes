@@ -18,7 +18,11 @@
       top: 0;
       bottom: 0;
     }
-    #root > div.dynamic-height { height: unset; }
+    /* `top`/`bottom` both non-auto (above) forces this element to stretch to
+       its container's full height regardless of `height: unset` alone —
+       `position: static` (or `top/bottom: auto`) is what actually lets it
+       shrink to content, which dynamicHeight mode depends on. */
+    #root > div.dynamic-height { height: unset; position: static; }
     #root div .ProseMirror { min-height: 100%; overflow: visible; }
     #root div.dynamic-height .ProseMirror { height: unset; }
     .ProseMirror:focus { outline: none; }

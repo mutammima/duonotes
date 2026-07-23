@@ -4,18 +4,28 @@ import { BridgeExtension } from '@10play/tentap-editor';
 export type SerializedStroke = { d: string; c: string; w: number };
 export type DrawingAttrs = { strokes: SerializedStroke[]; w: number; h: number };
 
+/**
+ * `anchor` is transient insert-time metadata (WebView-viewport-relative CSS
+ * px, matching what `editor.view.posAtCoords` expects) — it tells the web
+ * bridge WHERE on screen the ink was drawn, so the drawing can be inserted
+ * near that point instead of at the current text selection. Never persisted:
+ * the web bridge strips it before the `drawing` node's own attrs are set.
+ */
+export type DrawingInsertPayload = DrawingAttrs & { anchor?: { x: number; y: number } };
+
 export enum DrawingActionType {
   Insert = 'drawing-insert',
 }
 
 type DrawingMessage = {
   type: DrawingActionType.Insert;
-  payload: DrawingAttrs;
+  payload: DrawingInsertPayload;
 };
 
 type DrawingEditorInstance = {
-  /** Insert a vector drawing at the cursor. */
-  setDrawing: (drawing: DrawingAttrs) => void;
+  /** Insert a vector drawing near `anchor` (if given) rather than at the
+   *  current text selection. */
+  setDrawing: (drawing: DrawingInsertPayload) => void;
 };
 
 declare module '@10play/tentap-editor' {

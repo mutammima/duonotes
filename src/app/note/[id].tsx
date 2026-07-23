@@ -240,7 +240,7 @@ export default function NoteEditorScreen() {
             onUnlock={() => (note.lockType === 'biometric' ? tryBiometric() : setPinTask('unlock'))}
           />
         ) : (
-          <View style={styles.flex}>
+          <RichNoteEditor initialHtml={body} onChangeHtml={changeBody}>
             <View style={styles.editorHead}>
               <TextInput
                 value={title}
@@ -262,8 +262,7 @@ export default function NoteEditorScreen() {
                 </View>
               )}
             </View>
-            <RichNoteEditor initialHtml={body} onChangeHtml={changeBody} />
-          </View>
+          </RichNoteEditor>
         )}
       </SafeAreaView>
 
@@ -328,7 +327,6 @@ function LockGate({ lockType, onUnlock }: { lockType: LockType; onUnlock: () => 
 const styles = StyleSheet.create({
   container: { flex: 1 },
   safeArea: { flex: 1 },
-  flex: { flex: 1 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
