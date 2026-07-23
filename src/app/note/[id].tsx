@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, AppState, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -80,20 +80,11 @@ export default function NoteEditorScreen() {
     return () => sub.remove();
   }, [locked]);
 
-  // Covers the OTHER half of "re-lock when I leave" — navigating back to the
-  // list rather than backgrounding the app. A stack screen normally unmounts
-  // on pop (which would already reset `unlocked` fresh next time), but that's
-  // an implementation detail of the navigator, not a guarantee this
-  // security-sensitive reset should depend on — `useFocusEffect`'s cleanup
-  // (fired on blur) re-locks explicitly, regardless of whether this screen
-  // happens to unmount or gets frozen/kept alive by the navigator.
-  useFocusEffect(
-    useCallback(() => {
-      return () => {
-        if (locked) setUnlocked(false);
-      };
-    }, [locked]),
-  );
+  // The OTHER half of "re-lock when I leave" — navigating back to the list —
+  // is already covered without extra code: `note/[id]` is pushed as a modal
+  // stack screen, which unmounts on pop, and `unlocked`'s initial value
+  // (above) is computed fresh from `note.lockType` on every mount. Verified
+  // on-device: unlock a note, back out to the list, back in — locked again.
 
   // Debounce writes so we don't hit the database on every keystroke.
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
