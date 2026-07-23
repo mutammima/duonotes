@@ -24,9 +24,30 @@ function showFatal(message: string) {
     '</pre>';
 }
 
-window.addEventListener('error', (ev) =>
-  showFatal(String((ev as ErrorEvent).error?.stack ?? (ev as ErrorEvent).message)),
-);
+const editorMounted = () => !!document.querySelector('.ProseMirror');
+
+/**
+ * React 19's concurrent renderer, combined with tiptap creating its
+ * ProseMirror EditorView synchronously (and our drawing NodeView building its
+ * SVG synchronously), throws once during the concurrent pass and then RECOVERS
+ * by re-rendering the whole root synchronously — surfacing as a window 'error'
+ * whose message is "There was an error during concurrent rendering but React
+ * was able to recover…". That is benign: the editor mounts fine afterwards.
+ *
+ * So a window 'error' is only genuinely fatal if the editor never actually
+ * mounts. Don't paint the fatal screen the instant an error fires (that error
+ * arrives mid-recovery, before `.ProseMirror` exists, and would clobber a
+ * perfectly working editor a beat later). Instead defer the verdict until the
+ * synchronous recovery has had a chance to produce `.ProseMirror`, and only
+ * then decide. A real bootstrap crash never mounts, so it still reports.
+ */
+let lastError: string | null = null;
+window.addEventListener('error', (ev) => {
+  lastError = String((ev as ErrorEvent).error?.stack ?? (ev as ErrorEvent).message);
+  setTimeout(() => {
+    if (lastError && !editorMounted()) showFatal(lastError);
+  }, 600);
+});
 
 /**
  * react-native-webview can inject window content AFTER load (an Android race,

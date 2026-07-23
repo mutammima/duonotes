@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   defaultEditorTheme,
   RichText,
+  TenTapStartKit,
   Toolbar,
   useEditorBridge,
   useEditorContent,
@@ -15,6 +16,7 @@ import {
 
 import { DrawingCanvas } from '@/components/drawing-canvas';
 import { Spacing } from '@/constants/theme';
+import { DrawingBridge } from '@/lib/drawing-bridge';
 import { editorHtml } from '@/lib/editor-html';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -89,6 +91,11 @@ export function RichNoteEditor({
     // custom nodes/plugins (drawing, partner cursors) that the prebuilt
     // bundle gives no way to inject.
     customSource: editorHtml,
+    // MUST mirror the bundle's bridge list (web-editor/Tiptap.tsx). tentap
+    // builds `whiteListBridgeExtensions` from these names and the web side
+    // filters on it, so omitting DrawingBridge here makes the `drawing` node
+    // unknown in the editor — it would be stripped on load and autosaved away.
+    bridgeExtensions: [...TenTapStartKit, DrawingBridge],
   });
 
   const content = useEditorContent(editor, { type: 'html', debounceInterval: 500 });
@@ -228,14 +235,15 @@ export function RichNoteEditor({
           <Toolbar editor={editor} hidden={false} />
         </View>
       )}
-      <DrawingCanvas
-        visible={showDrawing}
-        onCancel={() => setShowDrawing(false)}
-        onSave={(dataUri) => {
-          editor.setImage(dataUri);
-          setShowDrawing(false);
-        }}
-      />
+      {showDrawing && (
+        <DrawingCanvas
+          onCancel={() => setShowDrawing(false)}
+          onSave={(drawing) => {
+            editor.setDrawing(drawing);
+            setShowDrawing(false);
+          }}
+        />
+      )}
     </View>
   );
 }

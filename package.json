@@ -47,6 +47,8 @@
     "@tiptap/react": "^3.27.4",
     "@types/react": "~19.2.2",
     "@vitejs/plugin-react": "^5.2.0",
+    "eslint": "^9.0.0",
+    "eslint-config-expo": "~57.0.0",
     "typescript": "~6.0.3",
     "vite": "^7.3.6",
     "vite-plugin-singlefile": "^2.3.3"
@@ -58,7 +60,8 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "ota": "eas update --channel production",
-    "build:editor": "bash scripts/build-editor.sh"
+    "build:editor": "bash scripts/build-editor.sh",
+    "build:editor:dev": "vite build --config web-editor/vite.config.dev.ts"
   },
   "private": true,
   "overrides": {
