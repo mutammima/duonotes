@@ -52,3 +52,6 @@ example
 web-editor/dist
 # debug harness output (regenerate: npm run build:editor:dev) — see web-editor/index.dev.tsx
 web-editor/dist-dev
+
+# Personal Claude Code permission grants — not for a public repo
+.claude/settings.local.json
