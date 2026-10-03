@@ -65,7 +65,8 @@ All primitives are standard; nothing is invented here.
   - ephemeral X25519 key pair `(e, E)`;
   - `K = HKDF-SHA256(ikm = x25519(e, R), salt = E ‖ R, info = "duonotes:wrap:v1", len = 32)`;
   - AES-256-GCM(`K`, random nonce, AAD `duonotes:wrap:v1:<noteId>`) over the note key;
-  - stored as `"v1." + base64(E ‖ nonce ‖ ct ‖ tag)` in `note_keys[<readerUserId>]`.
+  - stored as `"v1." + fp + "." + base64(E ‖ nonce ‖ ct ‖ tag)` in `note_keys[<readerUserId>]`,
+    where `fp` is the first 16 hex chars of SHA-256(R), so a stale wrap is detectable after a re-key.
 - **Safety code:** `SHA-256("duonotes:safety:v1" ‖ min(Pa,Pb) ‖ max(Pa,Pb))`. The first
   5 bytes are shown as **12 digits in three groups** (`4821 0937 5560`), the same on
   both phones regardless of order. Digits rather than words, to avoid shipping a word list.
@@ -109,7 +110,7 @@ and treats it as a fresh identity. Its old wraps are then unreadable; see
 **Partner key trust.** Trust on first use. The first partner key seen is recorded
 locally as `trustedPartnerKey`, marked unverified, and shown as *Not verified* in
 Settings until the codes are compared. If the partner's key later changes:
-- a banner says *"{name}'s key changed — verify again"*;
+- the Settings → Partner row says *"{name}'s key changed — verify again"*;
 - **no note key is wrapped for the new key until it is verified**.
 
 **Lock a note** (owner or partner, as today):
