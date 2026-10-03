@@ -20,6 +20,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { AppState } from 'react-native';
 
 import { useAuth } from '@/context/auth-context';
+import { fromRow } from '@/lib/note-rows';
 import { loadJSON, saveJSON, StorageKeys } from '@/lib/storage';
 import { supabase, TABLES } from '@/lib/supabase';
 import type { LockType, Note, NoteRow } from '@/lib/types';
@@ -178,16 +179,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   }, [pendingKey]);
 
   const mapRow = useCallback(
-    (row: NoteRow): Note => ({
-      id: row.id,
-      title: row.title,
-      body: row.body,
-      lockType: row.lock_type,
-      isShared: row.is_shared,
-      ownerId: row.owner_id,
-      ownerName: namesRef.current[row.owner_id] ?? 'Partner',
-      updatedAt: new Date(row.updated_at).getTime(),
-    }),
+    (row: NoteRow): Note => fromRow(row, namesRef.current[row.owner_id] ?? 'Partner'),
     [],
   );
 
@@ -529,6 +521,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       ownerId: user.id,
       ownerName: user.name,
       updatedAt: Date.now(),
+      ciphertext: null,
+      noteKeys: null,
     };
     const next = [note, ...notesRef.current];
     setNotes(next);

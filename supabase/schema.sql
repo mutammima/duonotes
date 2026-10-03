@@ -242,3 +242,17 @@ $$;
 revoke all on function public.duonotes_delete_account() from public;
 revoke all on function public.duonotes_delete_account() from anon;
 grant execute on function public.duonotes_delete_account() to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- End-to-end encrypted locked notes (docs/specs/2026-10-01-locked-note-encryption-design.md)
+-- Additive and re-runnable. Existing RLS covers the new columns.
+-- ---------------------------------------------------------------------------
+alter table public.duonotes_profiles add column if not exists public_key text;
+alter table public.duonotes_notes    add column if not exists ciphertext text;
+alter table public.duonotes_notes    add column if not exists note_keys  jsonb;
+
+-- An encrypted note may not also carry readable text. Stops an older app
+-- build from silently writing plaintext into an encrypted row.
+alter table public.duonotes_notes drop constraint if exists duonotes_notes_encrypted_is_blank;
+alter table public.duonotes_notes add constraint duonotes_notes_encrypted_is_blank
+  check (ciphertext is null or (title = '' and body = ''));
