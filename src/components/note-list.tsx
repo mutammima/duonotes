@@ -8,14 +8,15 @@ import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useNotes } from '@/context/notes-context';
 import { useTheme } from '@/hooks/use-theme';
+import { isSearchable } from '@/lib/note-rows';
 import { htmlToPlain } from '@/lib/markdown';
 import type { Note } from '@/lib/types';
 
-/** Locked notes keep their body hidden from search, same as the row preview does. */
+/** Encrypted notes are left out of search entirely: their titles are encrypted too. */
 type Searchable = { note: Note; titleLower: string; bodyLower: string };
 
 function buildSearchIndex(notes: Note[]): Searchable[] {
-  return notes.map((note) => ({
+  return notes.filter(isSearchable).map((note) => ({
     note,
     titleLower: note.title.toLowerCase(),
     bodyLower: note.lockType === 'none' ? htmlToPlain(note.body).toLowerCase() : '',

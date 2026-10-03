@@ -12,6 +12,7 @@ import { Spacing } from '@/constants/theme';
 import { useCollections } from '@/context/collections-context';
 import { useNotes } from '@/context/notes-context';
 import { useTheme } from '@/hooks/use-theme';
+import { isEncrypted } from '@/lib/note-rows';
 import { htmlToPlain } from '@/lib/markdown';
 import type { Note } from '@/lib/types';
 
@@ -153,7 +154,7 @@ export function NoteRow({ note }: { note: Note }) {
         ]}>
         <View style={styles.rowMain}>
           <ThemedText type="smallBold" numberOfLines={1} style={styles.rowTitle}>
-            {note.title.trim() || 'New Note'}
+            {isEncrypted(note) ? 'Locked note' : note.title.trim() || 'New Note'}
           </ThemedText>
           <View style={styles.rowSubtitle}>
             <ThemedText type="small" themeColor="textSecondary">
