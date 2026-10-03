@@ -238,17 +238,20 @@ export default function NoteEditorScreen() {
     if (Object.keys(patch).length === 0) return flushChain.current;
     // Called now, not after the chain: the note's write queue then holds this
     // save ahead of a `closeLocked` issued right after (leaving the screen).
-    const attempt = updateNote(id, patch);
+    // Settled to a boolean at once, so a refusal is never an unhandled rejection
+    // while it waits behind an earlier flush's recovery.
+    const attempt = updateNote(id, patch).then(
+      () => true,
+      () => false,
+    );
     const run = flushChain.current.then(async () => {
-      try {
-        await attempt;
+      if (await attempt) {
         pending.current = withoutSaved(pending.current, patch);
         setSaveError(false);
         return;
-      } catch {
-        // Refused: an encrypted note that isn't open, or whose ciphertext or keys
-        // changed underneath it (a partner's edit, a re-key, a lock change).
       }
+      // Refused: an encrypted note that isn't open, or whose ciphertext or keys
+      // changed underneath it (a partner's edit, a re-key, a lock change).
       // An earlier flush's retry may already have saved everything.
       if (Object.keys(pending.current).length === 0) {
         setSaveError(false);
@@ -263,16 +266,18 @@ export default function NoteEditorScreen() {
         return;
       }
       const retry = pending.current;
-      try {
-        await updateNote(id, retry);
+      const saved = await updateNote(id, retry).then(
+        () => true,
+        () => false,
+      );
+      if (saved) {
         pending.current = withoutSaved(pending.current, retry);
         setSaveError(false);
-      } catch {
+      } else {
         // Still refused: the banner tells the user, and the edit stays pending.
         setSaveError(true);
-      } finally {
-        if (!holdingOpenRef.current) closeLocked(id);
       }
+      if (!holdingOpenRef.current) closeLocked(id);
     });
     flushChain.current = run;
     return run;
@@ -328,15 +333,28 @@ export default function NoteEditorScreen() {
     };
   }, [encrypted, unlocked, id, closeLocked]);
 
-  // Seed the fields the first time the decrypted text arrives — never over
-  // text the user typed and hasn't saved yet.
+  // True while this screen is mounted with its gate open. A Lock started here
+  // creates the open entry only when sealing finishes; if by then the user has
+  // left (or the app re-locked), the hold effect above never ran for it, so the
+  // entry is closed by `applyLock` instead.
+  const screenOpenRef = useRef(false);
   useEffect(() => {
+    screenOpenRef.current = unlocked;
+    return () => {
+      screenOpenRef.current = false;
+    };
+  }, [unlocked]);
+
+  // Seed the fields the first time the decrypted text arrives — never over
+  // text the user typed and hasn't saved yet, and never behind a closed gate.
+  useEffect(() => {
+    if (locked && !unlocked) return;
     if (!encrypted || !plain || seededId === id) return;
     setSeededId(id);
     if (Object.keys(pending.current).length > 0) return;
     setTitle(plain.title);
     setBody(plain.body);
-  }, [encrypted, plain, id, seededId]);
+  }, [locked, unlocked, encrypted, plain, id, seededId]);
 
   // Adopt the partner's title, under the same rule as the body: never over a
   // field you are in.
@@ -350,15 +368,17 @@ export default function NoteEditorScreen() {
   //
   // `plain` is undefined while an encrypted note's text isn't open, so a note
   // that was just sealed (its own title now '') is never mistaken for an empty one.
+  // Nothing is copied in behind a closed gate; unlocking re-runs the check.
   const lastTitleEditRef = useRef(0);
   useEffect(() => {
+    if (locked && !unlocked) return;
     if (!plain || titleFocused) return;
     if (plain.title === title) return;
     if (pending.current.title !== undefined) return;
     if (Date.now() - lastTitleEditRef.current < TITLE_ADOPT_GRACE_MS) return;
     setTitle(plain.title);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plain?.title, titleFocused]);
+  }, [plain?.title, titleFocused, locked, unlocked]);
 
   // Set once the user actively dismisses a biometric prompt, so we never
   // re-prompt them in a loop they can't escape. Cleared when they ask again.
@@ -409,9 +429,23 @@ export default function NoteEditorScreen() {
     reportTyping();
   };
 
+  // While the gate is closed, the header's share and lock actions only ask for
+  // the PIN / Face ID: with encryption, both use the note's key (Remove lock
+  // writes the decrypted text out), so neither may run without unlocking first.
+  // After unlocking, the user taps again.
+  const gated = locked && !unlocked;
+  const requestUnlock = () => {
+    if (activeNote.lockType === 'biometric') void tryBiometric();
+    else setPinTask('unlock');
+  };
+
   // The people icon: if there's no partner yet, invite one first; otherwise
   // just toggle sharing.
   const onSharePress = () => {
+    if (gated) {
+      requestUnlock();
+      return;
+    }
     if (!activeNote.isShared && !user?.partnerId) {
       setShowLink(true);
       return;
@@ -438,7 +472,9 @@ export default function NoteEditorScreen() {
       await setLock(activeNote.id, type);
     } catch (e) {
       showUpdateError(e);
+      return;
     }
+    if (type !== 'none' && !screenOpenRef.current) closeLocked(activeNote.id);
   };
 
   const enablePinLock = async () => {
@@ -468,6 +504,10 @@ export default function NoteEditorScreen() {
   };
 
   const chooseLock = () => {
+    if (gated) {
+      requestUnlock();
+      return;
+    }
     const options: { text: string; onPress?: () => void; style?: 'cancel' | 'destructive' }[] = [
       { text: activeNote.lockType === 'pin' ? '🔒 PIN lock (on)' : 'PIN lock', onPress: enablePinLock },
       {
