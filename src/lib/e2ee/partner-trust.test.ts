@@ -32,3 +32,30 @@ describe('canWrapFor / markVerified', () => {
     expect(evaluatePartnerKey(markVerified('B'), 'B').status).toBe('verified');
   });
 });
+
+describe('trust-transition state machine', () => {
+  it('unverified stored key that changes → changed, next === stored', () => {
+    const stored = { key: 'A', verified: false };
+    const result = evaluatePartnerKey(stored, 'B');
+    expect(result.status).toBe('changed');
+    expect(result.next).toBe(stored);
+  });
+  it('changed status persists: same evaluation again returns changed', () => {
+    const stored = { key: 'A', verified: true };
+    const result1 = evaluatePartnerKey(stored, 'B');
+    const result2 = evaluatePartnerKey(result1.next, 'B');
+    expect(result2.status).toBe('changed');
+    expect(result2.next).toBe(stored);
+  });
+  it('recovery: changed → verify → verified', () => {
+    const stored = { key: 'A', verified: true };
+    // First: current key changed
+    const changed = evaluatePartnerKey(stored, 'B');
+    expect(changed.status).toBe('changed');
+    // Then: user verifies and marks the new key
+    const verified = evaluatePartnerKey(markVerified('B'), 'B');
+    expect(verified.status).toBe('verified');
+    expect(verified.next?.key).toBe('B');
+    expect(verified.next?.verified).toBe(true);
+  });
+});

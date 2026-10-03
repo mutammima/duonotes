@@ -4,8 +4,10 @@ import { type Bytes, compareBytes, concat, utf8 } from './bytes';
 
 /**
  * The code both partners compare once, to prove the server didn't swap a public
- * key. Order-independent, so it reads the same on both phones. 40 bits is far
- * beyond what a key-swapping server could brute-force in real time.
+ * key. Order-independent, so it reads the same on both phones. A server that
+ * swaps keys at first exchange would need roughly 2^40 key generations per side
+ * to match a code (hours on GPUs for a determined attacker); 12 digits is the
+ * owner-approved trade-off for a code people read aloud.
  */
 export function safetyCode(a: Bytes, b: Bytes): string {
   const [lo, hi] = compareBytes(a, b) <= 0 ? [a, b] : [b, a];
