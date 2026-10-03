@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, AppState, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -16,6 +16,8 @@ import { useNotes } from '@/context/notes-context';
 import { useAccentHue } from '@/context/theme-context';
 import { useNotePresence } from '@/hooks/use-note-presence';
 import { useTheme } from '@/hooks/use-theme';
+import { E2eeError, type NotePlain } from '@/lib/e2ee/envelope';
+import { isEncrypted } from '@/lib/note-rows';
 import { setLockedNotePrivacy } from '@/lib/privacy-screen';
 import {
   authenticateBiometric,
@@ -34,18 +36,101 @@ import type { LockType } from '@/lib/types';
  */
 const TITLE_ADOPT_GRACE_MS = 1500;
 
+type PendingEdit = { title?: string; body?: string };
+
+/** What is still unsaved once `saved` has landed: fields typed over since keep their newer value. */
+function withoutSaved(pending: PendingEdit, saved: PendingEdit): PendingEdit {
+  const next = { ...pending };
+  for (const k of Object.keys(saved) as (keyof PendingEdit)[]) {
+    if (next[k] === saved[k]) delete next[k];
+  }
+  return next;
+}
+
+function openErrorText(reason: string, ownerName: string): string {
+  switch (reason) {
+    case 'no-key':
+      return `🔒 Waiting for ${ownerName}'s phone to share the key. This opens by itself once their phone is online.`;
+    case 'decrypt-failed':
+      return "This note can't be opened on this phone: the key doesn't match or the data is damaged.";
+    case 'malformed':
+      return "This note can't be opened on this phone: the data is damaged.";
+    case 'unsupported-version':
+      return "This note can't be opened on this phone: it was saved by a newer DuoNotes. Update the app.";
+    default:
+      return "This note can't be opened on this phone.";
+  }
+}
+
+/** Short reason for a failed share/lock change (the context rejects with an E2eeError or a plain Error). */
+function updateErrorText(e: unknown): string {
+  if (e instanceof E2eeError) {
+    return e.code === 'no-key'
+      ? "The note changed meanwhile, or its key isn't on this phone. Try again in a moment."
+      : "This note can't be opened on this phone.";
+  }
+  return 'Something went wrong. Try again.';
+}
+
+function showUpdateError(e: unknown) {
+  Alert.alert("Couldn't update this note", updateErrorText(e));
+}
+
 export default function NoteEditorScreen() {
   const theme = useTheme();
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { getNote, updateNote, deleteNote, toggleShared, setLock, loading, markSeen } = useNotes();
+  const {
+    getNote,
+    updateNote,
+    deleteNote,
+    toggleShared,
+    setLock,
+    loading,
+    markSeen,
+    opened,
+    openLocked,
+    closeLocked,
+  } = useNotes();
   const { user } = useAuth();
 
   const note = getNote(id);
+  const encrypted = note ? isEncrypted(note) : false;
+  // For an encrypted note, `note.title`/`note.body` are always '' and the real
+  // text is in the session-only `opened` map, filled after the gate passes. A
+  // plain note always reads its own fields, so a stale `opened` entry left over
+  // from before its lock was removed is never shown.
+  const openedPlain = opened[id];
+  const plain = useMemo<NotePlain | undefined>(
+    () => (encrypted ? openedPlain : note ? { title: note.title, body: note.body } : undefined),
+    [encrypted, openedPlain, note],
+  );
+  // Which note's text the local fields hold. The editor only reads `initialHtml`
+  // when it mounts, so an encrypted note keeps showing "Opening…" until its
+  // decrypted text has been copied into `body` (see the seeding effect below).
+  const [seededId, setSeededId] = useState<string | null>(note && !isEncrypted(note) ? id : null);
+  // The last failed open, tagged with the key and ciphertext it was attempted
+  // at, so a retry under a new wrap or version shows "Opening…" rather than
+  // the old failure.
+  const [openFailure, setOpenFailure] = useState<{
+    wrap: string | undefined;
+    ciphertext: string | null | undefined;
+    text: string;
+  } | null>(null);
+  const [saveError, setSaveError] = useState(false);
+  const myWrap = user ? note?.noteKeys?.[user.id] : undefined;
+  const ciphertext = note?.ciphertext;
+  const openError =
+    openFailure && openFailure.wrap === myWrap && openFailure.ciphertext === ciphertext
+      ? openFailure.text
+      : null;
 
   const [title, setTitle] = useState(note?.title ?? '');
   const [body, setBody] = useState(note?.body ?? '');
-  const [unlocked, setUnlocked] = useState(note ? note.lockType === 'none' : true);
+  // Closed while the note is still loading: in the commit where it arrives, the
+  // effects below still read this initial value, and an encrypted note must not
+  // be decrypted before its gate. An unlocked note is set open by the id effect.
+  const [unlocked, setUnlocked] = useState(note ? note.lockType === 'none' : false);
   // `pinTask` drives the shared PinModal for either unlocking or enabling a PIN.
   const [pinTask, setPinTask] = useState<'unlock' | 'enable' | null>(null);
   // Invite/link-partner sheet, opened when you share without a partner linked.
@@ -78,10 +163,16 @@ export default function NoteEditorScreen() {
   // The BODY is separately kept live by RichNoteEditor's `remoteHtml`, which
   // installs a partner's revision whenever the caret is elsewhere. `body` here
   // stays the local mirror used for saving.
+  //
+  // An encrypted note's own fields are always '', so it is seeded from its
+  // decrypted text instead, once the gate has passed (see below).
   useEffect(() => {
     if (note) {
-      setTitle(note.title);
-      setBody(note.body);
+      if (!isEncrypted(note)) {
+        setTitle(note.title);
+        setBody(note.body);
+        setSeededId(note.id);
+      }
       setUnlocked(note.lockType === 'none');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -127,18 +218,65 @@ export default function NoteEditorScreen() {
 
   // Debounce writes so we don't hit the database on every keystroke.
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pending = useRef<{ title?: string; body?: string }>({});
+  const pending = useRef<PendingEdit>({});
+  // Each flush's recovery waits for the one before it, so two failed saves
+  // never race each other to reopen the note.
+  const flushChain = useRef<Promise<void>>(Promise.resolve());
+  // True while this screen holds an encrypted note open (gate passed, screen
+  // mounted). A save recovered after leaving closes the note again behind it.
+  const holdingOpenRef = useRef(false);
 
-  const flush = useCallback(() => {
+  // Resolves once the edit is saved or has definitively failed; never rejects.
+  // `pending` is cleared only by a save that landed, so a refused save keeps the
+  // typed text queued (and on screen) instead of dropping it.
+  const flush = useCallback((): Promise<void> => {
     if (saveTimer.current) {
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
     }
-    if (Object.keys(pending.current).length > 0) {
-      updateNote(id, pending.current);
-      pending.current = {};
-    }
-  }, [id, updateNote]);
+    const patch = pending.current;
+    if (Object.keys(patch).length === 0) return flushChain.current;
+    // Called now, not after the chain: the note's write queue then holds this
+    // save ahead of a `closeLocked` issued right after (leaving the screen).
+    const attempt = updateNote(id, patch);
+    const run = flushChain.current.then(async () => {
+      try {
+        await attempt;
+        pending.current = withoutSaved(pending.current, patch);
+        setSaveError(false);
+        return;
+      } catch {
+        // Refused: an encrypted note that isn't open, or whose ciphertext or keys
+        // changed underneath it (a partner's edit, a re-key, a lock change).
+      }
+      // An earlier flush's retry may already have saved everything.
+      if (Object.keys(pending.current).length === 0) {
+        setSaveError(false);
+        return;
+      }
+      // Reopen once at the current version and save again, with anything typed
+      // since merged in. The banner goes up only if that fails too, so an
+      // ordinary collision (a partner's edit landing mid-save) never flashes it.
+      const reopened = await openLocked(id);
+      if (!reopened.ok) {
+        setSaveError(true);
+        return;
+      }
+      const retry = pending.current;
+      try {
+        await updateNote(id, retry);
+        pending.current = withoutSaved(pending.current, retry);
+        setSaveError(false);
+      } catch {
+        // Still refused: the banner tells the user, and the edit stays pending.
+        setSaveError(true);
+      } finally {
+        if (!holdingOpenRef.current) closeLocked(id);
+      }
+    });
+    flushChain.current = run;
+    return run;
+  }, [id, updateNote, openLocked, closeLocked]);
 
   const persist = useCallback(
     (patch: { title?: string; body?: string }) => {
@@ -152,7 +290,53 @@ export default function NoteEditorScreen() {
   );
 
   // Flush any pending edit when leaving the screen.
-  useEffect(() => flush, [flush]);
+  useEffect(() => () => void flush(), [flush]);
+
+  // Decrypt once the PIN/Face ID gate has passed, and again whenever the open
+  // text goes missing while the gate is open: the note was just sealed (by a
+  // lock or background maintenance), or a refresh dropped it. `myWrap` is in the
+  // deps so a note that was "waiting for the key" opens by itself the moment
+  // the other phone's wrap syncs in; `ciphertext` so a new version is tried.
+  const hasPlain = plain !== undefined;
+  const ownerName = note?.ownerName ?? 'your partner';
+  const openSeqRef = useRef(0);
+  useEffect(() => {
+    if (!encrypted || !unlocked || hasPlain) return;
+    const seq = ++openSeqRef.current;
+    const at = { wrap: myWrap, ciphertext };
+    openLocked(id).then((r) => {
+      if (seq !== openSeqRef.current) return; // a newer attempt owns the outcome
+      setOpenFailure(r.ok ? null : { ...at, text: openErrorText(r.reason, ownerName) });
+    });
+  }, [encrypted, unlocked, hasPlain, id, myWrap, ciphertext, ownerName, openLocked]);
+
+  // Hold the decrypted text only while the gate is open. Leaving the screen,
+  // re-locking in the background, or the lock being removed hands it back. The
+  // pending edit is flushed first so it is queued ahead of the close and saved
+  // under the key it was typed for.
+  const flushRef = useRef(flush);
+  useEffect(() => {
+    flushRef.current = flush;
+  }, [flush]);
+  useEffect(() => {
+    if (!encrypted || !unlocked) return;
+    holdingOpenRef.current = true;
+    return () => {
+      holdingOpenRef.current = false;
+      void flushRef.current();
+      closeLocked(id);
+    };
+  }, [encrypted, unlocked, id, closeLocked]);
+
+  // Seed the fields the first time the decrypted text arrives — never over
+  // text the user typed and hasn't saved yet.
+  useEffect(() => {
+    if (!encrypted || !plain || seededId === id) return;
+    setSeededId(id);
+    if (Object.keys(pending.current).length > 0) return;
+    setTitle(plain.title);
+    setBody(plain.body);
+  }, [encrypted, plain, id, seededId]);
 
   // Adopt the partner's title, under the same rule as the body: never over a
   // field you are in.
@@ -163,15 +347,18 @@ export default function NoteEditorScreen() {
   // typed. `pending` covers the window before the debounce fires; the grace
   // period covers the render or two between `updateNote` and `note` coming back
   // holding our value.
+  //
+  // `plain` is undefined while an encrypted note's text isn't open, so a note
+  // that was just sealed (its own title now '') is never mistaken for an empty one.
   const lastTitleEditRef = useRef(0);
   useEffect(() => {
-    if (!note || titleFocused) return;
-    if (note.title === title) return;
+    if (!plain || titleFocused) return;
+    if (plain.title === title) return;
     if (pending.current.title !== undefined) return;
     if (Date.now() - lastTitleEditRef.current < TITLE_ADOPT_GRACE_MS) return;
-    setTitle(note.title);
+    setTitle(plain.title);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [note?.title, titleFocused]);
+  }, [plain?.title, titleFocused]);
 
   // Set once the user actively dismisses a biometric prompt, so we never
   // re-prompt them in a loop they can't escape. Cleared when they ask again.
@@ -229,11 +416,29 @@ export default function NoteEditorScreen() {
       setShowLink(true);
       return;
     }
-    toggleShared(activeNote.id);
+    void toggleSharing();
   };
 
+  // Never rejects. Sharing or unsharing an encrypted note re-wraps or re-keys it,
+  // which can be refused (the key isn't here, or the note changed meanwhile).
+  const toggleSharing = async () => {
+    await flush();
+    try {
+      await toggleShared(activeNote.id);
+    } catch (e) {
+      showUpdateError(e);
+    }
+  };
+
+  // Never rejects; reports a refused change itself. The typed-but-unsaved text
+  // is saved first, so it is included in what gets sealed (or unsealed).
   const applyLock = async (type: LockType) => {
-    await setLock(activeNote.id, type);
+    await flush();
+    try {
+      await setLock(activeNote.id, type);
+    } catch (e) {
+      showUpdateError(e);
+    }
   };
 
   const enablePinLock = async () => {
@@ -271,7 +476,7 @@ export default function NoteEditorScreen() {
       },
     ];
     if (activeNote.lockType !== 'none') {
-      options.push({ text: 'Remove lock', style: 'destructive', onPress: () => applyLock('none') });
+      options.push({ text: 'Remove lock', style: 'destructive', onPress: () => void applyLock('none') });
     }
     options.push({ text: 'Cancel', style: 'cancel' });
     Alert.alert('Lock note', 'Keep this note hidden until it is unlocked.', options);
@@ -333,13 +538,27 @@ export default function NoteEditorScreen() {
             lockType={note.lockType}
             onUnlock={() => (note.lockType === 'biometric' ? tryBiometric() : setPinTask('unlock'))}
           />
+        ) : encrypted && (seededId !== id || (!plain && openError)) ? (
+          // Decrypting, or it can't be opened here. Once the fields are seeded the
+          // editor stays up while a re-open is in flight (the text was already on
+          // screen), and gives way only if that re-open fails.
+          <View style={styles.openState}>
+            <Ionicons
+              name={openError ? 'alert-circle-outline' : 'lock-open-outline'}
+              size={28}
+              color={theme.textSecondary}
+            />
+            <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
+              {openError ?? 'Opening…'}
+            </ThemedText>
+          </View>
         ) : (
           <RichNoteEditor
             initialHtml={body}
             onChangeHtml={changeBody}
             // Only shared notes have a second author, so only they can receive
             // a revision from anyone else.
-            remoteHtml={isShared ? note.body : undefined}>
+            remoteHtml={isShared ? plain?.body : undefined}>
             <View style={styles.editorHead}>
               <TextInput
                 value={title}
@@ -366,6 +585,11 @@ export default function NoteEditorScreen() {
                     Shared with your partner
                   </ThemedText>
                 </View>
+              )}
+              {saveError && (
+                <ThemedText type="small" style={{ color: '#E5484D' }}>
+                  {"Couldn't encrypt your last change, so it wasn't saved. Try again."}
+                </ThemedText>
               )}
               {partnerHere && (
                 // Their theme colour, not yours — so it reads as "them".
@@ -410,7 +634,7 @@ export default function NoteEditorScreen() {
         visible={showLink}
         onClose={() => setShowLink(false)}
         onLinked={() => {
-          if (!activeNote.isShared) toggleShared(activeNote.id);
+          if (!activeNote.isShared) void toggleSharing();
         }}
         reason="Link your partner to share this note. Enter the email they signed up with — once linked, this note syncs to their phone."
       />
@@ -475,6 +699,7 @@ const styles = StyleSheet.create({
   presenceDot: { width: 8, height: 8, borderRadius: 4 },
   gate: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.two, padding: Spacing.four },
   gateText: { textAlign: 'center' },
+  openState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.two, padding: Spacing.four },
   unlockButton: {
     marginTop: Spacing.three,
     flexDirection: 'row',
