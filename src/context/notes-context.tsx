@@ -49,7 +49,7 @@ interface NotesContextValue {
   pendingCount: number;
   getNote: (id: string) => Note | undefined;
   createNote: () => Promise<Note | null>;
-  updateNote: (id: string, patch: Partial<Pick<Note, 'title' | 'body' | 'lockType'>>) => Promise<void>;
+  updateNote: (id: string, patch: Partial<Pick<Note, 'title' | 'body'>>) => Promise<void>;
   deleteNote: (id: string) => Promise<void>;
   toggleShared: (id: string) => Promise<void>;
   setLock: (id: string, lockType: LockType) => Promise<void>;
@@ -92,6 +92,49 @@ async function probeOnline(): Promise<boolean> {
   }
 }
 
+/**
+ * Run `fn` once every earlier op queued for the same note has settled (success or
+ * failure), so two writes to one note never interleave across an `await`. A write
+ * that encrypts with a note key must not land after another write re-keyed the note.
+ */
+function runSerial<T>(queue: Map<string, Promise<unknown>>, id: string, fn: () => Promise<T>): Promise<T> {
+  const run = (queue.get(id) ?? Promise.resolve()).then(fn);
+  const tail = run.catch(() => {});
+  queue.set(id, tail);
+  void tail.then(() => {
+    if (queue.get(id) === tail) queue.delete(id);
+  });
+  return run;
+}
+
+function sameKeys(a: Record<string, string> | null, b: Record<string, string> | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const ka = Object.keys(a);
+  return ka.length === Object.keys(b).length && ka.every((k) => a[k] === b[k]);
+}
+
+/** Nothing a seal, re-key or unlock depends on changed between two reads of a note. */
+function sameContent(a: Note, b: Note): boolean {
+  return (
+    a.title === b.title &&
+    a.body === b.body &&
+    a.lockType === b.lockType &&
+    a.isShared === b.isShared &&
+    a.ciphertext === b.ciphertext &&
+    sameKeys(a.noteKeys, b.noteKeys)
+  );
+}
+
+/**
+ * The note changed underneath an encrypting write (re-keyed, unlocked, or edited
+ * remotely), so the key or plaintext this phone holds is no longer current. Nothing
+ * is saved; reopening the note picks up the current version.
+ */
+function staleNote(): E2eeError {
+  return new E2eeError('no-key');
+}
+
 export function NotesProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const uid = user?.id ?? null;
@@ -107,6 +150,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const dirtyRef = useRef<Set<string>>(new Set());
   const deletedRef = useRef<Set<string>>(new Set());
   const syncingRef = useRef(false);
+  const rerunSyncRef = useRef(false);
   const onlineRef = useRef(true);
   const namesRef = useRef<Record<string, string>>({}); // id -> display name
 
@@ -134,6 +178,12 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const openRef = useRef(new Map<string, Opened & { ciphertext: string }>());
   const [opened, setOpened] = useState<Record<string, NotePlain>>({});
   const [partnerKey, setPartnerKey] = useState<{ status: PartnerKeyStatus; code: string | null }>({ status: 'none', code: null });
+  /** Per-note op chains for `runSerial`. */
+  const serialRef = useRef(new Map<string, Promise<unknown>>());
+  /** Bumped when the account changes, so a slow key load for the old account can't land on the new one. */
+  const setupGenRef = useRef({ n: 0 });
+  /** Key setup failed (Keychain, network); `syncNow` retries it while this is set. */
+  const setupFailedRef = useRef(false);
 
   const setOpenedEntry = useCallback((id: string, entry: (Opened & { ciphertext: string }) | null) => {
     if (entry) openRef.current.set(id, entry);
@@ -158,11 +208,12 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [uid],
   );
 
-  /** Decrypt without keeping the result (for re-keying from a list action). */
+  /** Decrypt without keeping the result (for re-keying from a list action). Reuses the
+   *  open entry only when it was opened at this exact ciphertext. */
   const decryptFor = useCallback(
     async (n: Note): Promise<Opened> => {
       const open = openRef.current.get(n.id);
-      if (open) return open;
+      if (open && open.ciphertext === n.ciphertext) return open;
       const identity = identityRef.current;
       if (!identity || !uid) throw new E2eeError('no-key');
       return openNote(expoDeps, n.id, { ciphertext: n.ciphertext!, noteKeys: n.noteKeys ?? {} }, { userId: uid, identity });
@@ -172,6 +223,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const refreshPartnerKey = useCallback(async () => {
     if (!uid) return;
+    const gen = setupGenRef.current.n;
     const identity = identityRef.current;
     if (!partnerId) {
       partnerRef.current = null;
@@ -184,6 +236,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // Corrupt trust record: fail closed as 'changed' (no wraps) and save nothing; Settings → Verify resets it.
       const current = (await fetchPublicKey(partnerId)) ?? null;
+      if (gen !== setupGenRef.current.n) return;
       partnerRef.current = current ? { userId: partnerId, publicKey: fromB64(current), status: 'changed' } : null;
       setPartnerKey({
         status: current ? 'changed' : 'none',
@@ -196,6 +249,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     const current = fetched === undefined ? (stored?.key ?? null) : fetched;
     const { status, next } = evaluatePartnerKey(stored, current);
     if (next !== stored && next !== null) await savePartnerTrust(uid, next);
+    if (gen !== setupGenRef.current.n) return;
     partnerRef.current = current ? { userId: partnerId, publicKey: fromB64(current), status } : null;
     setPartnerKey({ status, code: current && identity ? safetyCode(identity.publicKey, fromB64(current)) : null });
   }, [uid, partnerId]);
@@ -208,27 +262,55 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     void syncNowRef.current(); // wraps any notes that were waiting on verification
   }, [uid, refreshPartnerKey]);
 
+  /** Load this account's key (once) and the partner's key trust. A failure is retried by the next sync. */
+  const ensureSetup = useCallback(async () => {
+    if (!uid) return;
+    const gen = setupGenRef.current.n;
+    try {
+      if (!identityRef.current) {
+        const identity = await loadOrCreateIdentity(uid);
+        if (gen !== setupGenRef.current.n) return;
+        identityRef.current = identity;
+      }
+      await refreshPartnerKey();
+      if (gen === setupGenRef.current.n) setupFailedRef.current = false;
+    } catch {
+      if (gen === setupGenRef.current.n) setupFailedRef.current = true;
+    }
+  }, [uid, refreshPartnerKey]);
+
+  // Per account: drop the key and any open plaintext when the account changes or signs out.
+  // Done on cleanup rather than at the top of the body so no state is set synchronously in the effect.
   useEffect(() => {
     if (!uid) return;
-    let active = true;
     const open = openRef.current; // the same Map for the provider's lifetime (only ever mutated)
-    (async () => {
-      const identity = await loadOrCreateIdentity(uid);
-      if (!active) return;
-      identityRef.current = identity;
-      await refreshPartnerKey();
-      void syncNowRef.current();
-    })().catch(() => {});
+    const gen = setupGenRef.current; // likewise the same object
     return () => {
-      active = false;
-      // Drop this account's key and any open plaintext before the next run (or sign-out).
-      // Done on cleanup rather than at the top of the body so no state is set synchronously in the effect.
+      gen.n += 1;
+      setupFailedRef.current = false;
       identityRef.current = null;
       partnerRef.current = null;
       open.clear();
       setOpened({});
     };
-  }, [uid, refreshPartnerKey]);
+  }, [uid]);
+
+  // Per account + partner: (re)load the partner's key. Linking or unlinking a
+  // partner re-runs only this, so notes open on screen stay open.
+  useEffect(() => {
+    if (!uid) return;
+    let active = true;
+    // Started from a microtask: with the key already loaded and no partner, setup sets state
+    // before its first await, and that must not happen synchronously inside the effect.
+    void Promise.resolve()
+      .then(ensureSetup)
+      .then(() => {
+        if (active) void syncNowRef.current();
+      });
+    return () => {
+      active = false;
+    };
+  }, [uid, ensureSetup]);
 
   const notesKey = uid ? `${StorageKeys.notes}.${uid}` : null;
   const pendingKey = uid ? `${StorageKeys.pending}.${uid}` : null;
@@ -309,23 +391,31 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   );
 
   /** After new rows land, re-decrypt any open note whose ciphertext changed underneath it. */
-  const refreshOpened = useCallback(
-    async (list: Note[]) => {
-      for (const [id, entry] of [...openRef.current]) {
-        const n = list.find((x) => x.id === id);
-        if (!n || !isEncrypted(n) || n.ciphertext === entry.ciphertext) continue;
-        // decryptFor returns the cached entry when present, so drop it to force a fresh decrypt.
-        openRef.current.delete(id);
-        try {
-          const o = await decryptFor(n);
-          setOpenedEntry(id, { ...o, ciphertext: n.ciphertext! });
-        } catch {
-          openRef.current.set(id, entry); // keep the last good plaintext; the next edit re-encrypts it
+  const refreshOpened = useCallback(async () => {
+    for (const id of [...openRef.current.keys()]) {
+      // Local unsynced edits win, the same rule reconcile uses.
+      if (dirtyRef.current.has(id)) continue;
+      await runSerial(serialRef.current, id, async () => {
+        const entry = openRef.current.get(id);
+        const n = notesRef.current.find((x) => x.id === id);
+        if (!entry || !n || dirtyRef.current.has(id) || n.ciphertext === entry.ciphertext) return;
+        if (!isEncrypted(n)) {
+          setOpenedEntry(id, null); // the lock was removed elsewhere; the note is readable as is
+          return;
         }
-      }
-    },
-    [decryptFor, setOpenedEntry],
-  );
+        try {
+          const o = await decryptFor(n); // a fresh decrypt: the entry is at another ciphertext
+          const live = notesRef.current.find((x) => x.id === id);
+          if (openRef.current.get(id) === entry && live?.ciphertext === n.ciphertext) {
+            setOpenedEntry(id, { ...o, ciphertext: n.ciphertext! });
+          }
+        } catch {
+          // Never leave an entry editable under a key the note no longer uses.
+          if (openRef.current.get(id) === entry) setOpenedEntry(id, null);
+        }
+      });
+    }
+  }, [decryptFor, setOpenedEntry]);
 
   // Pull the server's notes and merge them with any local pending changes:
   // server rows are the base, local unsynced edits/creates win, local deletes
@@ -404,7 +494,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     const merged = [...byId.values()];
     setNotes(merged);
     await persistCache(merged);
-    await refreshOpened(merged);
+    await refreshOpened();
   }, [user, mapRow, setNotes, persistCache, refreshOpened]);
 
   // Upload everything in the pending queue. Deletes first, then owned notes via
@@ -460,53 +550,73 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     const p = partnerRef.current;
     const partner = p && canWrapFor(p.status) ? { userId: p.userId, fingerprint: keyFingerprint(p.publicKey) } : null;
     const plan = planMaintenance({ notes: notesRef.current, myUserId: user.id, partner });
-    const changed = new Map<string, Note>();
+    let changed = 0;
+    // Merge onto the live note, and only if nothing it was built from changed during the await.
+    const commit = (before: Note, patch: Partial<Note>) => {
+      const live = notesRef.current.find((x) => x.id === before.id);
+      if (!live || !sameContent(before, live)) return;
+      setNotes(notesRef.current.map((x) => (x.id === before.id ? { ...x, ...patch } : x)));
+      dirtyRef.current.add(before.id);
+      changed++;
+    };
     for (const id of plan.sealLegacy) {
-      const n = notesRef.current.find((x) => x.id === id);
-      if (!n) continue;
-      try {
-        const s = await sealNote(expoDeps, id, { title: n.title, body: n.body }, readersFor(n));
-        changed.set(id, { ...n, title: '', body: '', ciphertext: s.ciphertext, noteKeys: s.noteKeys });
-      } catch {
-        // Stays readable-locked as before; retried next sync.
-      }
+      await runSerial(serialRef.current, id, async () => {
+        const n = notesRef.current.find((x) => x.id === id);
+        // Re-check against the live note: an earlier op in the queue may have handled it.
+        if (!n || !planMaintenance({ notes: [n], myUserId: user.id, partner }).sealLegacy.length) return;
+        try {
+          const s = await sealNote(expoDeps, id, { title: n.title, body: n.body }, readersFor(n));
+          commit(n, { title: '', body: '', ciphertext: s.ciphertext, noteKeys: s.noteKeys });
+        } catch {
+          // Stays readable-locked as before; retried next sync.
+        }
+      });
     }
     for (const id of plan.wrapForPartner) {
-      const n = notesRef.current.find((x) => x.id === id);
-      if (!n || !p) continue;
-      try {
-        const { noteKey } = await decryptFor(n);
-        changed.set(id, { ...n, noteKeys: await addReader(expoDeps, id, noteKey, n.noteKeys ?? {}, p) });
-      } catch {
-        // Can't open it here; never touch it.
-      }
+      await runSerial(serialRef.current, id, async () => {
+        const n = notesRef.current.find((x) => x.id === id);
+        if (!n || !p || !planMaintenance({ notes: [n], myUserId: user.id, partner }).wrapForPartner.length) return;
+        try {
+          const { noteKey } = await decryptFor(n);
+          commit(n, { noteKeys: await addReader(expoDeps, id, noteKey, n.noteKeys ?? {}, p) });
+        } catch {
+          // Can't open it here; never touch it.
+        }
+      });
     }
-    if (!changed.size) return;
-    const next = notesRef.current.map((n) => changed.get(n.id) ?? n);
-    setNotes(next);
-    await persistCache(next);
-    for (const id of changed.keys()) dirtyRef.current.add(id);
+    if (!changed) return;
+    await persistCache(notesRef.current);
     refreshPendingCount();
     await persistPending();
     await flushPending();
   }, [user, readersFor, decryptFor, setNotes, persistCache, refreshPendingCount, persistPending, flushPending]);
 
   const syncNow = useCallback(async () => {
-    if (!user || syncingRef.current) return;
+    if (!user) return;
+    if (syncingRef.current) {
+      rerunSyncRef.current = true; // run once more when the current sync finishes, rather than dropping this
+      return;
+    }
     syncingRef.current = true;
     try {
-      await flushPending();
-      await reconcile();
-      await runMaintenance();
-      onlineRef.current = true;
-      setIsOnline(true);
-    } catch {
-      onlineRef.current = false;
-      setIsOnline(false);
+      do {
+        rerunSyncRef.current = false;
+        try {
+          if (setupFailedRef.current) await ensureSetup();
+          await flushPending();
+          await reconcile();
+          await runMaintenance();
+          onlineRef.current = true;
+          setIsOnline(true);
+        } catch {
+          onlineRef.current = false;
+          setIsOnline(false);
+        }
+      } while (rerunSyncRef.current);
     } finally {
       syncingRef.current = false;
     }
-  }, [user, flushPending, reconcile, runMaintenance]);
+  }, [user, ensureSetup, flushPending, reconcile, runMaintenance]);
 
   useEffect(() => {
     syncNowRef.current = syncNow;
@@ -685,25 +795,30 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const getNote = useCallback((id: string) => notes.find((n) => n.id === id), [notes]);
 
   const openLocked = useCallback(
-    async (id: string): Promise<OpenResult> => {
-      const n = notesRef.current.find((x) => x.id === id);
-      if (!n) return { ok: false, reason: 'missing' };
-      if (!isEncrypted(n)) return { ok: true };
-      openRef.current.delete(id);
-      try {
-        // Inside the try so a Keychain failure resolves as a result rather than rejecting.
-        if (!identityRef.current && uid) identityRef.current = await loadOrCreateIdentity(uid);
-        const o = await decryptFor(n);
-        setOpenedEntry(id, { ...o, ciphertext: n.ciphertext! });
-        return { ok: true };
-      } catch (e) {
-        return { ok: false, reason: e instanceof E2eeError ? e.code : 'decrypt-failed' };
-      }
-    },
-    [uid, decryptFor, setOpenedEntry],
+    (id: string): Promise<OpenResult> =>
+      runSerial(serialRef.current, id, async (): Promise<OpenResult> => {
+        const n = notesRef.current.find((x) => x.id === id);
+        if (!n) return { ok: false, reason: 'missing' };
+        if (!isEncrypted(n)) return { ok: true };
+        openRef.current.delete(id);
+        try {
+          if (!identityRef.current) await ensureSetup(); // e.g. the Keychain wasn't readable at sign-in
+          const o = await decryptFor(n);
+          setOpenedEntry(id, { ...o, ciphertext: n.ciphertext! });
+          return { ok: true };
+        } catch (e) {
+          setOpenedEntry(id, null);
+          return { ok: false, reason: e instanceof E2eeError ? e.code : 'decrypt-failed' };
+        }
+      }),
+    [ensureSetup, decryptFor, setOpenedEntry],
   );
 
-  const closeLocked = useCallback((id: string) => setOpenedEntry(id, null), [setOpenedEntry]);
+  // Queued behind the note's pending writes, so the save the editor flushes on
+  // leaving the screen still finds the note open.
+  const closeLocked = useCallback((id: string) => {
+    void runSerial(serialRef.current, id, async () => setOpenedEntry(id, null));
+  }, [setOpenedEntry]);
 
   const createNote = useCallback(async (): Promise<Note | null> => {
     if (!user) return null;
@@ -731,40 +846,52 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   }, [user, setNotes, persistCache, markDirty, syncNow, touchSeen]);
 
   const updateNote = useCallback<NotesContextValue['updateNote']>(
-    async (id, patch) => {
-      // A write that changes nothing must stay a no-op. Bumping `updatedAt` and
-      // marking the note dirty would upload it, and the database's updated_at
-      // trigger fires on any UPDATE — so an empty write rewrites the real edit
-      // time on BOTH copies. The editor re-reporting identical content is the
-      // path that made a shared note look edited the moment it was opened.
-      const current = notesRef.current.find((n) => n.id === id);
-      if (current && isEncrypted(current)) {
-        const entry = openRef.current.get(id);
-        if (!entry) return; // only an opened note can be edited
-        const plain = { title: patch.title ?? entry.plain.title, body: patch.body ?? entry.plain.body };
-        if (plain.title === entry.plain.title && plain.body === entry.plain.body) return;
-        const ciphertext = await encryptNote(expoDeps, entry.noteKey, id, plain); // throws -> nothing saved
-        setOpenedEntry(id, { ...entry, plain, ciphertext });
+    (id, patch) =>
+      runSerial(serialRef.current, id, async () => {
+        // A write that changes nothing must stay a no-op. Bumping `updatedAt` and
+        // marking the note dirty would upload it, and the database's updated_at
+        // trigger fires on any UPDATE — so an empty write rewrites the real edit
+        // time on BOTH copies. The editor re-reporting identical content is the
+        // path that made a shared note look edited the moment it was opened.
+        const current = notesRef.current.find((n) => n.id === id);
+        if (current && isEncrypted(current)) {
+          const entry = openRef.current.get(id);
+          if (!entry) throw new E2eeError('no-key'); // only an opened note can be edited
+          if (entry.ciphertext !== current.ciphertext) throw staleNote();
+          const plain = { title: patch.title ?? entry.plain.title, body: patch.body ?? entry.plain.body };
+          if (plain.title === entry.plain.title && plain.body === entry.plain.body) return;
+          const ciphertext = await encryptNote(expoDeps, entry.noteKey, id, plain); // throws -> nothing saved
+          const live = notesRef.current.find((n) => n.id === id);
+          if (!live) return; // deleted meanwhile
+          if (
+            openRef.current.get(id) !== entry ||
+            live.ciphertext !== current.ciphertext ||
+            !sameKeys(live.noteKeys, current.noteKeys)
+          ) {
+            throw staleNote();
+          }
+          setOpenedEntry(id, { ...entry, plain, ciphertext });
+          const ts = Date.now();
+          const next = notesRef.current.map((n) => (n.id === id ? { ...n, ciphertext, updatedAt: ts } : n));
+          setNotes(next);
+          dirtyRef.current.add(id); // in the same tick, so a reconcile can't swap the old copy back in
+          await persistCache(next);
+          touchSeen(id, ts);
+          await markDirty(id);
+          void syncNow();
+          return;
+        }
+        if (current && (Object.keys(patch) as (keyof typeof patch)[]).every((k) => current[k] === patch[k])) {
+          return;
+        }
         const ts = Date.now();
-        const next = notesRef.current.map((n) => (n.id === id ? { ...n, ciphertext, updatedAt: ts } : n));
+        const next = notesRef.current.map((n) => (n.id === id ? { ...n, ...patch, updatedAt: ts } : n));
         setNotes(next);
         await persistCache(next);
         touchSeen(id, ts);
         await markDirty(id);
         void syncNow();
-        return;
-      }
-      if (current && (Object.keys(patch) as (keyof typeof patch)[]).every((k) => current[k] === patch[k])) {
-        return;
-      }
-      const ts = Date.now();
-      const next = notesRef.current.map((n) => (n.id === id ? { ...n, ...patch, updatedAt: ts } : n));
-      setNotes(next);
-      await persistCache(next);
-      touchSeen(id, ts);
-      await markDirty(id);
-      void syncNow();
-    },
+      }),
     [setOpenedEntry, setNotes, persistCache, markDirty, syncNow, touchSeen],
   );
 
@@ -783,64 +910,78 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   );
 
   const toggleShared = useCallback(
-    async (id: string) => {
-      const current = notesRef.current.find((n) => n.id === id);
-      if (!current) return;
-      let keys: Partial<Note> = {};
-      if (isEncrypted(current)) {
-        const o = await decryptFor(current);
-        const identity = identityRef.current!;
-        const me = { userId: uid!, publicKey: identity.publicKey };
-        const p = partnerRef.current;
-        if (!current.isShared) {
-          // Sharing: wrap for the partner now if trusted; otherwise maintenance does it after verification.
-          if (p && canWrapFor(p.status)) keys = { noteKeys: await addReader(expoDeps, id, o.noteKey, current.noteKeys ?? {}, p) };
-        } else {
-          // Unsharing: fresh key, owner only, so later edits stay hidden from the partner.
-          // A partner key that changed and isn't re-verified is never wrapped for (spec, "Partner key trust").
-          const owner = rotationReader(current.ownerId, me, p && canWrapFor(p.status) ? p : null);
-          if (!owner) throw new E2eeError('no-key');
-          const s = await sealNote(expoDeps, id, o.plain, [owner]);
-          keys = { ciphertext: s.ciphertext, noteKeys: s.noteKeys };
-          if (openRef.current.has(id)) setOpenedEntry(id, { plain: o.plain, noteKey: s.noteKey, ciphertext: s.ciphertext });
+    (id: string) =>
+      runSerial(serialRef.current, id, async () => {
+        const current = notesRef.current.find((n) => n.id === id);
+        if (!current) return;
+        let keys: Partial<Note> = {};
+        let rotated: (Opened & { ciphertext: string }) | null = null;
+        if (isEncrypted(current)) {
+          const o = await decryptFor(current);
+          const identity = identityRef.current!;
+          const me = { userId: uid!, publicKey: identity.publicKey };
+          const p = partnerRef.current;
+          if (!current.isShared) {
+            // Sharing: wrap for the partner now if trusted; otherwise maintenance does it after verification.
+            if (p && canWrapFor(p.status)) keys = { noteKeys: await addReader(expoDeps, id, o.noteKey, current.noteKeys ?? {}, p) };
+          } else {
+            // Unsharing: fresh key, owner only, so later edits stay hidden from the partner.
+            // A partner key that changed and isn't re-verified is never wrapped for (spec, "Partner key trust").
+            const owner = rotationReader(current.ownerId, me, p && canWrapFor(p.status) ? p : null);
+            if (!owner) throw new E2eeError('no-key');
+            const s = await sealNote(expoDeps, id, o.plain, [owner]);
+            keys = { ciphertext: s.ciphertext, noteKeys: s.noteKeys };
+            rotated = { plain: o.plain, noteKey: s.noteKey, ciphertext: s.ciphertext };
+          }
         }
-      }
-      const now = Date.now();
-      const next = notesRef.current.map((n) =>
-        n.id === id ? { ...n, ...keys, isShared: !current.isShared, updatedAt: now } : n,
-      );
-      setNotes(next);
-      await persistCache(next);
-      touchSeen(id, now);
-      await markDirty(id);
-      void syncNow();
-    },
+        const live = notesRef.current.find((n) => n.id === id);
+        if (!live) return; // deleted meanwhile
+        if (!sameContent(current, live)) throw staleNote();
+        if (rotated && openRef.current.has(id)) setOpenedEntry(id, rotated);
+        const now = Date.now();
+        const next = notesRef.current.map((n) =>
+          n.id === id ? { ...n, ...keys, isShared: !current.isShared, updatedAt: now } : n,
+        );
+        setNotes(next);
+        dirtyRef.current.add(id); // in the same tick, so a reconcile can't swap the old copy back in
+        await persistCache(next);
+        touchSeen(id, now);
+        await markDirty(id);
+        void syncNow();
+      }),
     [uid, decryptFor, setOpenedEntry, setNotes, persistCache, markDirty, syncNow, touchSeen],
   );
 
   const setLock = useCallback<NotesContextValue['setLock']>(
-    async (id, lockType) => {
-      const n = notesRef.current.find((x) => x.id === id);
-      if (!n) return;
-      let patch: Partial<Note> = { lockType };
-      if (lockType !== 'none' && !isEncrypted(n)) {
-        const plain = { title: n.title, body: n.body };
-        const s = await sealNote(expoDeps, id, plain, readersFor(n)); // throws -> nothing saved
-        setOpenedEntry(id, { plain, noteKey: s.noteKey, ciphertext: s.ciphertext }); // keep it open on screen
-        patch = { lockType, title: '', body: '', ciphertext: s.ciphertext, noteKeys: s.noteKeys };
-      } else if (lockType === 'none' && isEncrypted(n)) {
-        const o = await decryptFor(n);
-        patch = { lockType, title: o.plain.title, body: o.plain.body, ciphertext: null, noteKeys: null };
-        setOpenedEntry(id, null);
-      }
-      const ts = Date.now();
-      const next = notesRef.current.map((x) => (x.id === id ? { ...x, ...patch, updatedAt: ts } : x));
-      setNotes(next);
-      await persistCache(next);
-      touchSeen(id, ts);
-      await markDirty(id);
-      void syncNow();
-    },
+    (id, lockType) =>
+      runSerial(serialRef.current, id, async () => {
+        const n = notesRef.current.find((x) => x.id === id);
+        if (!n) return;
+        let patch: Partial<Note> = { lockType };
+        let entry: (Opened & { ciphertext: string }) | null | undefined; // undefined: leave as is
+        if (lockType !== 'none' && !isEncrypted(n)) {
+          const plain = { title: n.title, body: n.body };
+          const s = await sealNote(expoDeps, id, plain, readersFor(n)); // throws -> nothing saved
+          entry = { plain, noteKey: s.noteKey, ciphertext: s.ciphertext }; // keep it open on screen
+          patch = { lockType, title: '', body: '', ciphertext: s.ciphertext, noteKeys: s.noteKeys };
+        } else if (lockType === 'none' && isEncrypted(n)) {
+          const o = await decryptFor(n);
+          patch = { lockType, title: o.plain.title, body: o.plain.body, ciphertext: null, noteKeys: null };
+          entry = null;
+        }
+        const live = notesRef.current.find((x) => x.id === id);
+        if (!live) return; // deleted meanwhile
+        if (!sameContent(n, live)) throw staleNote();
+        if (entry !== undefined) setOpenedEntry(id, entry);
+        const ts = Date.now();
+        const next = notesRef.current.map((x) => (x.id === id ? { ...x, ...patch, updatedAt: ts } : x));
+        setNotes(next);
+        dirtyRef.current.add(id); // in the same tick, so a reconcile can't swap the old copy back in
+        await persistCache(next);
+        touchSeen(id, ts);
+        await markDirty(id);
+        void syncNow();
+      }),
     [readersFor, decryptFor, setOpenedEntry, setNotes, persistCache, markDirty, syncNow, touchSeen],
   );
 
