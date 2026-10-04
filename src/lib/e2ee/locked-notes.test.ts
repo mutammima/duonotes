@@ -4,7 +4,9 @@ import { describe, expect, it } from 'vitest';
 import type { CryptoDeps } from './aes';
 import { webCryptoAes } from './aes-webcrypto';
 import { keyFingerprint, newIdentity, wrapKey } from './envelope';
-import { addReader, type MaintenanceNote, openNote, planMaintenance, rotationReader, sealNote } from './locked-notes';
+import {
+  addReader, type MaintenanceNote, openNote, openNoteKey, planMaintenance, rotationReader, sealNote,
+} from './locked-notes';
 
 const deps: CryptoDeps = { aes: webCryptoAes, randomBytes: (n) => new Uint8Array(randomBytes(n)) };
 const alice = { userId: 'alice', identity: newIdentity(deps) };
@@ -26,6 +28,18 @@ describe('seal / open', () => {
     const noteKeys = await addReader(deps, 'n1', s.noteKey, s.noteKeys, B);
     expect(Object.keys(noteKeys).sort()).toEqual(['alice', 'bob']);
     expect((await openNote(deps, 'n1', { ciphertext: s.ciphertext, noteKeys }, bob)).noteKey).toEqual(s.noteKey);
+  });
+});
+
+describe('openNoteKey (share/wrap without decrypting the body)', () => {
+  it('returns the note key from my wrap alone', async () => {
+    const s = await sealNote(deps, 'n1', plain, [A]);
+    expect(await openNoteKey(deps, 'n1', s.noteKeys, alice)).toEqual(s.noteKey);
+  });
+  it('no wrap for me → no-key; a wrap moved to another note fails', async () => {
+    const s = await sealNote(deps, 'n1', plain, [A]);
+    await expect(openNoteKey(deps, 'n1', s.noteKeys, bob)).rejects.toMatchObject({ code: 'no-key' });
+    await expect(openNoteKey(deps, 'n2', s.noteKeys, alice)).rejects.toBeTruthy();
   });
 });
 

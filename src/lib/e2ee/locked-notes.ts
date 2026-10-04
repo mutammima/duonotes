@@ -31,10 +31,17 @@ export async function sealNote(
 export async function openNote(
   deps: CryptoDeps, noteId: string, sealed: Sealed, me: { userId: string; identity: Identity },
 ): Promise<Opened> {
-  const wrapped = sealed.noteKeys[me.userId];
-  if (!wrapped) throw new E2eeError('no-key');
-  const noteKey = await unwrapKey(deps, wrapped, noteId, me.identity);
+  const noteKey = await openNoteKey(deps, noteId, sealed.noteKeys, me);
   return { plain: await decryptNote(deps, noteKey, noteId, sealed.ciphertext), noteKey };
+}
+
+/** Just the note key from my wrap: enough to share or re-wrap a note without decrypting its text. */
+export async function openNoteKey(
+  deps: CryptoDeps, noteId: string, noteKeys: Record<string, string>, me: { userId: string; identity: Identity },
+): Promise<Bytes> {
+  const wrapped = noteKeys[me.userId];
+  if (!wrapped) throw new E2eeError('no-key');
+  return unwrapKey(deps, wrapped, noteId, me.identity);
 }
 
 export async function addReader(

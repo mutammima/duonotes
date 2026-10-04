@@ -17,7 +17,7 @@ import { supabase, TABLES } from '@/lib/supabase';
 import { expoDeps } from './aes-expo';
 import { fromB64, toB64 } from './bytes';
 import { type Identity, identityFromSecret, newIdentity } from './envelope';
-import type { PartnerTrust } from './partner-trust';
+import { type PartnerTrust, parsePartnerTrust } from './partner-trust';
 
 const OPTS = { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK };
 const cache = new Map<string, Identity>();
@@ -46,16 +46,40 @@ async function loadOrCreate(userId: string): Promise<Identity> {
     await SecureStore.setItemAsync(key, toB64(identity.secretKey), OPTS);
   }
   cache.set(userId, identity);
-  // Publish in background: offline means it publishes on a later load.
-  void publishPublicKey(userId, toB64(identity.publicKey)).catch(() => {});
+  // Publish in background: offline means `ensurePublished` retries it on a later sync.
+  void ensurePublished(userId).catch(() => {});
   return identity;
+}
+
+/** `${userId}:${publicKey}` once the server is confirmed to hold this phone's public key. */
+const published = new Set<string>();
+
+/**
+ * Make sure the server holds this phone's public key for `userId`, once per
+ * identity: a no-op after the first confirmed publish, retried by every sync
+ * until then. Throws when it can't confirm (offline, or the update matched no row).
+ */
+export async function ensurePublished(userId: string): Promise<void> {
+  const identity = cache.get(userId);
+  if (!identity) return; // the identity isn't loaded yet; loading it publishes
+  const publicKey = toB64(identity.publicKey);
+  const tag = `${userId}:${publicKey}`;
+  if (published.has(tag)) return;
+  await publishPublicKey(userId, publicKey);
+  published.add(tag);
 }
 
 async function publishPublicKey(userId: string, publicKey: string): Promise<void> {
   const current = await fetchPublicKey(userId);
   if (current === publicKey) return;
-  const { error } = await supabase.from(TABLES.profiles).update({ public_key: publicKey }).eq('id', userId);
+  const { data, error } = await supabase
+    .from(TABLES.profiles)
+    .update({ public_key: publicKey })
+    .eq('id', userId)
+    .select('id');
   if (error) throw error;
+  // RLS or a missing profile row makes an update match nothing without an error.
+  if (!data || data.length === 0) throw new Error('public key not published');
 }
 
 /** `undefined` when the request failed (offline), `null` when there is no key. */
@@ -72,24 +96,7 @@ export async function fetchPublicKey(userId: string): Promise<string | null | un
  * trusting a partner key the server now holds after a local key verification failure.
  */
 export async function loadPartnerTrust(userId: string): Promise<PartnerTrust | null> {
-  const key = `${StorageKeys.e2eePartner}.${userId}`;
-  const raw = await AsyncStorage.getItem(key);
-  if (raw === null) return null;
-
-  let data: unknown;
-  try {
-    data = JSON.parse(raw);
-  } catch {
-    throw new Error('corrupt partner-trust record');
-  }
-
-  if (typeof data !== 'object' || data === null || !('key' in data) || !('verified' in data) ||
-      typeof (data as Record<string, unknown>).key !== 'string' ||
-      typeof (data as Record<string, unknown>).verified !== 'boolean') {
-    throw new Error('corrupt partner-trust record');
-  }
-
-  return data as PartnerTrust;
+  return parsePartnerTrust(await AsyncStorage.getItem(`${StorageKeys.e2eePartner}.${userId}`));
 }
 
 export function savePartnerTrust(userId: string, trust: PartnerTrust | null): Promise<void> {

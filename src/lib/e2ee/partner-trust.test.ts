@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { canWrapFor, evaluatePartnerKey, markVerified } from './partner-trust';
+import { canWrapFor, evaluatePartnerKey, markRejected, markVerified, parsePartnerTrust } from './partner-trust';
 
 describe('evaluatePartnerKey', () => {
   it('none when the partner has no key, keeping what is stored', () => {
@@ -57,5 +57,41 @@ describe('trust-transition state machine', () => {
     expect(verified.status).toBe('verified');
     expect(verified.next?.key).toBe('B');
     expect(verified.next?.verified).toBe(true);
+  });
+});
+
+describe("rejecting a key (They don't match)", () => {
+  it('reject → changed (no wraps) → verify → verified', () => {
+    const rejected = markRejected('A');
+    const r1 = evaluatePartnerKey(rejected, 'A');
+    expect(r1.status).toBe('changed');
+    expect(canWrapFor(r1.status)).toBe(false);
+    expect(r1.next).toBe(rejected); // nothing re-adopts it
+    expect(evaluatePartnerKey(r1.next, 'A').status).toBe('changed'); // stays rejected across launches
+    const verified = evaluatePartnerKey(markVerified('A'), 'A');
+    expect(verified.status).toBe('verified');
+    expect(verified.next).not.toHaveProperty('rejected');
+  });
+  it('a different key after a rejection is still changed', () => {
+    expect(evaluatePartnerKey(markRejected('A'), 'B').status).toBe('changed');
+  });
+  it('no key from the partner keeps the rejection stored', () => {
+    const rejected = markRejected('A');
+    expect(evaluatePartnerKey(rejected, null)).toEqual({ status: 'none', next: rejected });
+  });
+});
+
+describe('parsePartnerTrust (fail closed)', () => {
+  it('null when nothing is stored (first use)', () => expect(parsePartnerTrust(null)).toBeNull());
+  it('reads valid records, with or without the rejected flag', () => {
+    expect(parsePartnerTrust('{"key":"A","verified":true}')).toEqual({ key: 'A', verified: true });
+    expect(parsePartnerTrust('{"key":"A","verified":false,"rejected":true}')).toEqual(markRejected('A'));
+  });
+  it('throws on anything else, so a corrupt record never reads as first use', () => {
+    const bad = [
+      '', 'null', 'not json', '[]', '{"key":"A"}', '{"key":1,"verified":true}', '{"key":"A","verified":"yes"}',
+      '{"key":"A","verified":false,"rejected":false}', '{"key":"A","verified":false,"rejected":"true"}',
+    ];
+    for (const raw of bad) expect(() => parsePartnerTrust(raw), raw).toThrow('corrupt partner-trust record');
   });
 });
