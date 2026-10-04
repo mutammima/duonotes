@@ -26,9 +26,28 @@ export function fromRow(row: NoteRow, ownerName: string): Note {
   };
 }
 
-/** Cache written by a build that predates encryption has neither field. */
+/**
+ * `updatedAt` for a cache entry that must be refetched. Server timestamps are real
+ * dates, so reconcile's "same updatedAt → keep the cached copy" check never matches it.
+ */
+export const REFETCH_UPDATED_AT = 0;
+
+/**
+ * Cache written by a build that predates encryption has neither field. Such an
+ * entry may describe a row that is encrypted on the server by now (the other phone
+ * sealed it), and read as `ciphertext: null` it would look like a readable locked
+ * note that maintenance should seal, sealing '' over the real text. So an entry
+ * with no `ciphertext` key at all (old format, unlike a present `null`) gets an
+ * `updatedAt` that forces reconcile to download the row again.
+ */
 export function normalizeCached(n: Note): Note {
-  return { ...n, ciphertext: n.ciphertext ?? null, noteKeys: n.noteKeys ?? null };
+  const oldFormat = !('ciphertext' in n);
+  return {
+    ...n,
+    ciphertext: n.ciphertext ?? null,
+    noteKeys: n.noteKeys ?? null,
+    ...(oldFormat ? { updatedAt: REFETCH_UPDATED_AT } : {}),
+  };
 }
 
 export function forStorage(n: Note): Note {

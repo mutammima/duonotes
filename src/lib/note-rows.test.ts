@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { forStorage, fromRow, isEncrypted, isSearchable, normalizeCached, toForeignPatch, toOwnedRow } from './note-rows';
+import {
+  forStorage, fromRow, isEncrypted, isSearchable, normalizeCached, REFETCH_UPDATED_AT, toForeignPatch, toOwnedRow,
+} from './note-rows';
 import type { Note, NoteRow } from './types';
 
 const note = (over: Partial<Note> = {}): Note => ({
@@ -23,6 +25,21 @@ describe('note-rows', () => {
     expect(n.ciphertext).toBeNull();
     expect(n.noteKeys).toBeNull();
     expect(isEncrypted(n)).toBe(false);
+  });
+  it('old format (no ciphertext key) forces a refetch: updatedAt can never match a server timestamp', () => {
+    // The row may be encrypted on the server by now; an old entry must not be trusted as current.
+    const old = { ...note({ lockType: 'pin', title: '', body: '', updatedAt: 1759276800000 }) } as Partial<Note>;
+    delete old.ciphertext;
+    delete old.noteKeys;
+    expect(normalizeCached(old as Note).updatedAt).toBe(REFETCH_UPDATED_AT);
+    expect(REFETCH_UPDATED_AT).not.toBe(new Date('2026-10-01T00:00:00.000Z').getTime());
+  });
+  it('new format with ciphertext null is kept as is, timestamp included', () => {
+    const cached = note({ lockType: 'pin', updatedAt: 1759276800000 });
+    const n = normalizeCached(cached);
+    expect(n.updatedAt).toBe(1759276800000);
+    expect(n).toEqual(cached);
+    expect(normalizeCached(encrypted)).toEqual(encrypted);
   });
   it('never stores or uploads readable text for an encrypted note', () => {
     expect(forStorage(encrypted)).toMatchObject({ title: '', body: '', ciphertext: 'v1.abc' });
