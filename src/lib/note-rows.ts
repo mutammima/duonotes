@@ -73,3 +73,16 @@ export function toOwnedRow(n: Note, uid: string): Record<string, unknown> {
 export function isSearchable(n: Note): boolean {
   return !isEncrypted(n);
 }
+
+/**
+ * A LIKE pattern that matches exactly this saved version of a note's
+ * ciphertext, for compare-and-set writes. Not the whole ciphertext: a guard is
+ * sent in the request URL, and a note with a photo is megabytes. "v1." plus the
+ * 12-byte nonce (16 standard-base64 chars) is fresh on every save, so it pins
+ * the version just as well, and standard base64 contains no LIKE wildcards.
+ */
+export function ciphertextGuard(ciphertext: string): string {
+  const prefix = ciphertext.slice(0, 19);
+  if (!/^v1\.[A-Za-z0-9+/]{16}$/.test(prefix)) throw new Error('not a v1 ciphertext');
+  return `${prefix}%`;
+}

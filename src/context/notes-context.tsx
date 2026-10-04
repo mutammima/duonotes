@@ -34,7 +34,9 @@ import {
   type PartnerTrust,
 } from '@/lib/e2ee/partner-trust';
 import { safetyCode } from '@/lib/e2ee/safety-code';
-import { forStorage, fromRow, isEncrypted, NOTE_COLUMNS, normalizeCached, toForeignPatch, toOwnedRow } from '@/lib/note-rows';
+import {
+  ciphertextGuard, forStorage, fromRow, isEncrypted, NOTE_COLUMNS, normalizeCached, toForeignPatch, toOwnedRow,
+} from '@/lib/note-rows';
 import { loadJSON, saveJSON, StorageKeys } from '@/lib/storage';
 import { supabase, TABLES } from '@/lib/supabase';
 import type { LockType, Note, NoteRow } from '@/lib/types';
@@ -699,7 +701,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             .from(TABLES.notes)
             .update({ note_keys: noteKeys })
             .eq('id', id)
-            .eq('ciphertext', n.ciphertext!)
+            .like('ciphertext', ciphertextGuard(n.ciphertext!)) // nonce prefix: the full blob won't fit in a URL
             .select('id, updated_at');
           if (error) return; // retried next sync
           if (!data?.length) return lost(id); // re-keyed or edited elsewhere: refetch, wrap next time

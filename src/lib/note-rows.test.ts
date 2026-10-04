@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  forStorage, fromRow, isEncrypted, isSearchable, normalizeCached, REFETCH_UPDATED_AT, toForeignPatch, toOwnedRow,
+  ciphertextGuard, forStorage, fromRow, isEncrypted, isSearchable, normalizeCached, REFETCH_UPDATED_AT, toForeignPatch,
+  toOwnedRow,
 } from './note-rows';
 import type { Note, NoteRow } from './types';
 
@@ -54,5 +55,25 @@ describe('note-rows', () => {
   it('keeps encrypted notes out of search', () => {
     expect(isSearchable(encrypted)).toBe(false);
     expect(isSearchable(note())).toBe(true);
+  });
+});
+
+describe('ciphertextGuard', () => {
+  // A compare-and-set guard must fit in a request URL: the full ciphertext of a
+  // note with a photo is megabytes. "v1." + the 12-byte nonce (16 base64 chars)
+  // is fresh on every save, so it identifies the version just as well.
+  const nonce16 = 'AbCd+/0123456789';
+  it('is the version tag plus the base64 nonce, as a LIKE prefix', () => {
+    const big = `v1.${nonce16}${'x'.repeat(2_000_000)}`;
+    expect(ciphertextGuard(big)).toBe(`v1.${nonce16}%`);
+    expect(ciphertextGuard(big).length).toBe(20);
+  });
+  it('contains no LIKE wildcard other than the trailing %', () => {
+    expect(ciphertextGuard(`v1.${nonce16}rest`).slice(0, -1)).not.toMatch(/[%_\\]/);
+  });
+  it('refuses anything that is not a v1 blob with a full nonce', () => {
+    expect(() => ciphertextGuard('v1.short')).toThrow();
+    expect(() => ciphertextGuard(`v2.${nonce16}x`)).toThrow();
+    expect(() => ciphertextGuard(`v1.${nonce16.replace('A', '_')}x`)).toThrow();
   });
 });
