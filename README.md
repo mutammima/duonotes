@@ -248,7 +248,9 @@ Being honest here matters more than sounding impressive:
 **Encryption (locked notes)**
 - Locked notes' titles and bodies are encrypted on the phone (AES-256-GCM, a key per
   note, X25519 to share it with your partner). Supabase and the on-device cache hold
-  only ciphertext. Compare the safety code once in Settings → Partner.
+  only ciphertext. Compare the safety codes once in Settings → Partner: each phone's
+  *Your code* must match the other phone's *Partner's code* (in person or on a call).
+  This is what catches a server that swaps in its own public key.
 - **No recovery, by design:** lose the phone without an Apple transfer or backup and
   its private locked notes are gone. Shared ones survive on your partner's phone.
 - Still visible to the server: who owns a note, whether it's locked or shared, and when it changed.

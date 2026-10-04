@@ -23,11 +23,12 @@ import { useAuth } from '@/context/auth-context';
 import { expoDeps } from '@/lib/e2ee/aes-expo';
 import { fromB64, toB64, type Bytes } from '@/lib/e2ee/bytes';
 import { E2eeError, type E2eeErrorCode, encryptNote, type Identity, keyFingerprint, type NotePlain } from '@/lib/e2ee/envelope';
-import { fetchPublicKey, loadOrCreateIdentity, loadPartnerTrust, savePartnerTrust } from '@/lib/e2ee/keys';
-import { addReader, type Opened, openNote, planMaintenance, rotationReader, sealNote } from '@/lib/e2ee/locked-notes';
+import { ensurePublished, fetchPublicKey, loadOrCreateIdentity, loadPartnerTrust, savePartnerTrust } from '@/lib/e2ee/keys';
+import { addReader, type Opened, openNote, openNoteKey, planMaintenance, rotationReader, sealNote } from '@/lib/e2ee/locked-notes';
 import {
   canWrapFor,
   evaluatePartnerKey,
+  markRejected,
   markVerified,
   type PartnerKeyStatus,
   type PartnerTrust,
@@ -70,9 +71,28 @@ interface NotesContextValue {
   opened: Record<string, NotePlain>;
   openLocked: (id: string) => Promise<OpenResult>;
   closeLocked: (id: string) => void;
-  partnerKey: { status: PartnerKeyStatus; code: string | null };
-  verifyPartner: () => Promise<void>;
+  partnerKey: PartnerKeyView;
+  /** Re-read the partner's key from the server now; resolves with the codes and the key they were computed for. */
+  refreshPartnerKey: () => Promise<PartnerKeyCheck>;
+  /** "They match": trust exactly `partnerKey` (base64), the key whose code was shown. Throws if it changed since. */
+  verifyPartner: (partnerKey: string) => Promise<void>;
+  /** "They don't match": stop wrapping for exactly `partnerKey` until the codes are compared again. */
+  rejectPartner: (partnerKey: string) => Promise<void>;
 }
+
+/** Safety codes: each phone's "Your code" must equal the other phone's "Partner's code". */
+export interface PartnerKeyView {
+  status: PartnerKeyStatus;
+  myCode: string | null;
+  partnerCode: string | null;
+}
+
+export interface PartnerKeyCheck extends PartnerKeyView {
+  /** The partner's public key (base64) that `partnerCode` was computed from. */
+  key: string | null;
+}
+
+const NO_PARTNER_KEY: PartnerKeyCheck = { status: 'none', myCode: null, partnerCode: null, key: null };
 
 export type OpenResult = { ok: true } | { ok: false; reason: E2eeErrorCode | 'missing' };
 
@@ -177,9 +197,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   /** Decrypted notes open on screen, with the ciphertext they were opened at. Never persisted. */
   const openRef = useRef(new Map<string, Opened & { ciphertext: string }>());
   const [opened, setOpened] = useState<Record<string, NotePlain>>({});
-  const [partnerKey, setPartnerKey] = useState<{ status: PartnerKeyStatus; code: string | null }>({ status: 'none', code: null });
+  const [partnerKey, setPartnerKey] = useState<PartnerKeyView>({ status: 'none', myCode: null, partnerCode: null });
   /** Per-note op chains for `runSerial`. */
   const serialRef = useRef(new Map<string, Promise<unknown>>());
+  /** One chain for partner-trust reads and writes, so a refresh can't land a stale status over a verify. */
+  const partnerSerialRef = useRef(new Map<string, Promise<unknown>>());
+  /** Ids reconcile must download again even if the timestamps match (a compare-and-set write lost). */
+  const forceRefetchRef = useRef(new Set<string>());
   /** Bumped when the account changes, so a slow key load for the old account can't land on the new one. */
   const setupGenRef = useRef({ n: 0 });
   /** Key setup failed (Keychain, network); `syncNow` retries it while this is set. */
@@ -221,46 +245,87 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [uid],
   );
 
-  const refreshPartnerKey = useCallback(async () => {
-    if (!uid) return;
+  /** Just the note key, for sharing or wrapping: unwraps my wrap without decrypting the text. */
+  const noteKeyFor = useCallback(
+    async (n: Note): Promise<Bytes> => {
+      const open = openRef.current.get(n.id);
+      if (open && open.ciphertext === n.ciphertext) return open.noteKey;
+      const identity = identityRef.current;
+      if (!identity || !uid) throw new E2eeError('no-key');
+      return openNoteKey(expoDeps, n.id, n.noteKeys ?? {}, { userId: uid, identity });
+    },
+    [uid],
+  );
+
+  /** Read the partner's key and our trust in it. Call only inside the partner chain. */
+  const loadPartnerKey = useCallback(async (): Promise<PartnerKeyCheck> => {
+    if (!uid) return NO_PARTNER_KEY;
     const gen = setupGenRef.current.n;
     const identity = identityRef.current;
+    const myCode = identity ? safetyCode(identity.publicKey) : null;
     if (!partnerId) {
       partnerRef.current = null;
-      setPartnerKey({ status: 'none', code: null });
-      return;
+      setPartnerKey({ status: 'none', myCode, partnerCode: null });
+      return { ...NO_PARTNER_KEY, myCode };
     }
-    let stored: PartnerTrust | null;
+    let stored: PartnerTrust | null = null;
+    let corrupt = false;
     try {
       stored = await loadPartnerTrust(uid);
     } catch {
-      // Corrupt trust record: fail closed as 'changed' (no wraps) and save nothing; Settings → Verify resets it.
-      const current = (await fetchPublicKey(partnerId)) ?? null;
-      if (gen !== setupGenRef.current.n) return;
-      partnerRef.current = current ? { userId: partnerId, publicKey: fromB64(current), status: 'changed' } : null;
-      setPartnerKey({
-        status: current ? 'changed' : 'none',
-        code: current && identity ? safetyCode(identity.publicKey, fromB64(current)) : null,
-      });
-      return;
+      corrupt = true;
     }
     const fetched = await fetchPublicKey(partnerId);
-    // Offline: keep using the last key we knew rather than dropping the partner.
-    const current = fetched === undefined ? (stored?.key ?? null) : fetched;
-    const { status, next } = evaluatePartnerKey(stored, current);
-    if (next !== stored && next !== null) await savePartnerTrust(uid, next);
-    if (gen !== setupGenRef.current.n) return;
+    let status: PartnerKeyStatus;
+    let current: string | null;
+    if (corrupt) {
+      // Corrupt trust record: fail closed as 'changed' (no wraps) and save nothing; Settings → Verify resets it.
+      current = fetched ?? null;
+      status = current ? 'changed' : 'none';
+    } else {
+      // Offline: keep using the last key we knew rather than dropping the partner.
+      current = fetched === undefined ? (stored?.key ?? null) : fetched;
+      const evaluated = evaluatePartnerKey(stored, current);
+      status = evaluated.status;
+      if (evaluated.next !== stored && evaluated.next !== null) await savePartnerTrust(uid, evaluated.next);
+    }
+    if (gen !== setupGenRef.current.n) return NO_PARTNER_KEY;
     partnerRef.current = current ? { userId: partnerId, publicKey: fromB64(current), status } : null;
-    setPartnerKey({ status, code: current && identity ? safetyCode(identity.publicKey, fromB64(current)) : null });
+    const view: PartnerKeyView = { status, myCode, partnerCode: current ? safetyCode(fromB64(current)) : null };
+    setPartnerKey(view);
+    return { ...view, key: current };
   }, [uid, partnerId]);
 
-  const verifyPartner = useCallback(async () => {
-    const p = partnerRef.current;
-    if (!uid || !p) return;
-    await savePartnerTrust(uid, markVerified(toB64(p.publicKey)));
-    await refreshPartnerKey();
-    void syncNowRef.current(); // wraps any notes that were waiting on verification
-  }, [uid, refreshPartnerKey]);
+  const refreshPartnerKey = useCallback(
+    () => runSerial(partnerSerialRef.current, 'partner', loadPartnerKey),
+    [loadPartnerKey],
+  );
+
+  /** Save a decision about exactly the key whose code the user was shown, then re-read. */
+  const decidePartnerKey = useCallback(
+    (expected: string, decide: (key: string) => PartnerTrust) =>
+      runSerial(partnerSerialRef.current, 'partner', async () => {
+        const p = partnerRef.current;
+        // The key may have changed since the codes were shown: the user compared another key's code.
+        if (!uid || !p || toB64(p.publicKey) !== expected) throw new Error("partner key changed; compare the codes again");
+        await savePartnerTrust(uid, decide(expected));
+        await loadPartnerKey();
+      }),
+    [uid, loadPartnerKey],
+  );
+
+  const verifyPartner = useCallback(
+    async (expected: string) => {
+      await decidePartnerKey(expected, markVerified);
+      void syncNowRef.current(); // wraps any notes that were waiting on verification
+    },
+    [decidePartnerKey],
+  );
+
+  const rejectPartner = useCallback(
+    (expected: string) => decidePartnerKey(expected, markRejected),
+    [decidePartnerKey],
+  );
 
   /** Load this account's key (once) and the partner's key trust. A failure is retried by the next sync. */
   const ensureSetup = useCallback(async () => {
@@ -285,8 +350,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     if (!uid) return;
     const open = openRef.current; // the same Map for the provider's lifetime (only ever mutated)
     const gen = setupGenRef.current; // likewise the same object
+    const forced = forceRefetchRef.current; // likewise
     return () => {
       gen.n += 1;
+      forced.clear();
       setupFailedRef.current = false;
       identityRef.current = null;
       partnerRef.current = null;
@@ -448,6 +515,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     // Step 2 — download bodies only for rows we don't already hold at that
     // version. In the steady state (nothing changed) this fetches nothing.
     const localById = new Map(notesRef.current.map((n) => [n.id, n]));
+    const forced = new Set(forceRefetchRef.current);
     const staleIds = rows
       .filter((r) => {
         // A note with unpushed local edits is about to win the merge below
@@ -455,6 +523,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         // would happen on every poll for as long as you're typing, which is
         // exactly when polls are firing.
         if (dirtyRef.current.has(r.id)) return false;
+        if (forced.has(r.id)) return true; // a compare-and-set write found the row changed
         const local = localById.get(r.id);
         return !local || local.updatedAt !== new Date(r.updated_at).getTime();
       })
@@ -475,6 +544,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       if (bodyError || !data) throw bodyError ?? new Error('Failed to fetch notes');
       for (const row of data as NoteRow[]) fetched.set(row.id, mapRow(row));
     }
+    // Every forced id that isn't dirty was either just downloaded or is gone from the server.
+    for (const id of forced) if (!dirtyRef.current.has(id)) forceRefetchRef.current.delete(id);
 
     // Step 3 — rebuild from the manifest, so ordering and deletions still come
     // from the server. Use the freshly fetched copy where there is one, the
@@ -510,7 +581,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       deletedRef.current = new Set();
     }
 
-    const owned: Record<string, unknown>[] = [];
+    // Snapshot the exact Note objects being uploaded. Every local write replaces
+    // the object, so an id whose object changed during the upload was edited
+    // again meanwhile and must stay dirty: that newer edit hasn't been sent.
+    const owned: Note[] = [];
     const foreign: Note[] = [];
     for (const id of dirtyRef.current) {
       const n = notesRef.current.find((x) => x.id === id);
@@ -519,16 +593,20 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         continue;
       }
       if (n.ownerId === user.id) {
-        owned.push(toOwnedRow(n, user.id));
+        owned.push(n);
       } else {
         foreign.push(n);
       }
     }
+    const settle = (sent: Note) => {
+      if (notesRef.current.find((x) => x.id === sent.id) === sent) dirtyRef.current.delete(sent.id);
+    };
 
     if (owned.length) {
-      const { error } = await supabase.from(TABLES.notes).upsert(owned, { onConflict: 'id' });
+      const rows = owned.map((n) => toOwnedRow(n, user.id));
+      const { error } = await supabase.from(TABLES.notes).upsert(rows, { onConflict: 'id' });
       if (error) throw error;
-      for (const row of owned) dirtyRef.current.delete(row.id as string);
+      owned.forEach(settle);
     }
 
     for (const n of foreign) {
@@ -537,13 +615,23 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         .update(toForeignPatch(n))
         .eq('id', n.id);
       if (error) throw error;
-      dirtyRef.current.delete(n.id);
+      settle(n);
     }
 
     await persistPending();
     refreshPendingCount();
   }, [user, persistPending, refreshPendingCount]);
 
+  /**
+   * Seal my pre-encryption locked notes and wrap note keys for a trusted partner.
+   * These writes go straight to the server as compare-and-set updates, not through
+   * the dirty queue, so a stale local copy can never overwrite the row:
+   *  - a seal lands only while the row is still unencrypted (`ciphertext is null`);
+   *  - a wrap changes only `note_keys`, and only while the row still holds the
+   *    ciphertext the wrapped key belongs to.
+   * If the row changed (0 rows updated), nothing is written and the row is refetched.
+   * Local state takes a write only after the server confirmed it.
+   */
   const runMaintenance = useCallback(async () => {
     const identity = identityRef.current;
     if (!user || !identity) return;
@@ -551,22 +639,45 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     const partner = p && canWrapFor(p.status) ? { userId: p.userId, fingerprint: keyFingerprint(p.publicKey) } : null;
     const plan = planMaintenance({ notes: notesRef.current, myUserId: user.id, partner });
     let changed = 0;
-    // Merge onto the live note, and only if nothing it was built from changed during the await.
-    const commit = (before: Note, patch: Partial<Note>) => {
-      const live = notesRef.current.find((x) => x.id === before.id);
-      if (!live || !sameContent(before, live)) return;
-      setNotes(notesRef.current.map((x) => (x.id === before.id ? { ...x, ...patch } : x)));
-      dirtyRef.current.add(before.id);
+    let refetch = false;
+    const liveNote = (id: string) => notesRef.current.find((x) => x.id === id);
+    // Unchanged since `before` was read, with no local edit waiting to upload.
+    const untouched = (before: Note) => {
+      const live = liveNote(before.id);
+      return !!live && sameContent(before, live) && !dirtyRef.current.has(before.id);
+    };
+    const lost = (id: string) => {
+      forceRefetchRef.current.add(id);
+      refetch = true;
+    };
+    // Apply a server-confirmed write to the live note, if nothing it was built from changed meanwhile.
+    const applyConfirmed = (before: Note, patch: Partial<Note>, updatedAt: string) => {
+      if (!untouched(before)) return lost(before.id);
+      const ts = new Date(updatedAt).getTime();
+      setNotes(notesRef.current.map((x) => (x.id === before.id ? { ...x, ...patch, updatedAt: ts } : x)));
+      touchSeen(before.id, ts); // this phone's own write: don't badge it as the partner's
       changed++;
     };
     for (const id of plan.sealLegacy) {
       await runSerial(serialRef.current, id, async () => {
-        const n = notesRef.current.find((x) => x.id === id);
+        const n = liveNote(id);
         // Re-check against the live note: an earlier op in the queue may have handled it.
-        if (!n || !planMaintenance({ notes: [n], myUserId: user.id, partner }).sealLegacy.length) return;
+        if (!n || dirtyRef.current.has(id)) return;
+        if (!planMaintenance({ notes: [n], myUserId: user.id, partner }).sealLegacy.length) return;
         try {
           const s = await sealNote(expoDeps, id, { title: n.title, body: n.body }, readersFor(n));
-          commit(n, { title: '', body: '', ciphertext: s.ciphertext, noteKeys: s.noteKeys });
+          if (!untouched(n)) return;
+          const patch: Partial<Note> = { title: '', body: '', ciphertext: s.ciphertext, noteKeys: s.noteKeys };
+          const { data, error } = await supabase
+            .from(TABLES.notes)
+            .update(toForeignPatch({ ...n, ...patch }))
+            .eq('id', id)
+            .is('ciphertext', null)
+            .select('id, updated_at');
+          if (error) return; // retried next sync
+          // 0 rows: already encrypted on the server (or gone). Never overwrite it; read it again.
+          if (!data?.length) return lost(id);
+          applyConfirmed(n, patch, (data[0] as { updated_at: string }).updated_at);
         } catch {
           // Stays readable-locked as before; retried next sync.
         }
@@ -574,22 +685,33 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     }
     for (const id of plan.wrapForPartner) {
       await runSerial(serialRef.current, id, async () => {
-        const n = notesRef.current.find((x) => x.id === id);
-        if (!n || !p || !planMaintenance({ notes: [n], myUserId: user.id, partner }).wrapForPartner.length) return;
+        const n = liveNote(id);
+        if (!n || !p || dirtyRef.current.has(id)) return;
+        if (!planMaintenance({ notes: [n], myUserId: user.id, partner }).wrapForPartner.length) return;
         try {
-          const { noteKey } = await decryptFor(n);
-          commit(n, { noteKeys: await addReader(expoDeps, id, noteKey, n.noteKeys ?? {}, p) });
+          const noteKey = await noteKeyFor(n); // unwrap only: wrapping a key doesn't need the text
+          const noteKeys = await addReader(expoDeps, id, noteKey, n.noteKeys ?? {}, p);
+          // Trust may have been withdrawn ("They don't match") while this ran.
+          const now = partnerRef.current;
+          if (!now || !canWrapFor(now.status) || keyFingerprint(now.publicKey) !== partner?.fingerprint) return;
+          if (!untouched(n)) return;
+          const { data, error } = await supabase
+            .from(TABLES.notes)
+            .update({ note_keys: noteKeys })
+            .eq('id', id)
+            .eq('ciphertext', n.ciphertext!)
+            .select('id, updated_at');
+          if (error) return; // retried next sync
+          if (!data?.length) return lost(id); // re-keyed or edited elsewhere: refetch, wrap next time
+          applyConfirmed(n, { noteKeys }, (data[0] as { updated_at: string }).updated_at);
         } catch {
           // Can't open it here; never touch it.
         }
       });
     }
-    if (!changed) return;
-    await persistCache(notesRef.current);
-    refreshPendingCount();
-    await persistPending();
-    await flushPending();
-  }, [user, readersFor, decryptFor, setNotes, persistCache, refreshPendingCount, persistPending, flushPending]);
+    if (changed) await persistCache(notesRef.current);
+    if (refetch) await reconcile();
+  }, [user, readersFor, noteKeyFor, setNotes, touchSeen, persistCache, reconcile]);
 
   const syncNow = useCallback(async () => {
     if (!user) return;
@@ -602,7 +724,12 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       do {
         rerunSyncRef.current = false;
         try {
+          // Re-read the partner's key every pass, so a key published (or changed)
+          // after launch is picked up without a relaunch. A failure never aborts the
+          // sync, and trust stays fail-closed (see loadPartnerKey).
           if (setupFailedRef.current) await ensureSetup();
+          else await refreshPartnerKey().catch(() => {});
+          await ensurePublished(user.id).catch(() => {}); // until the server confirms our key once
           await flushPending();
           await reconcile();
           await runMaintenance();
@@ -616,7 +743,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     } finally {
       syncingRef.current = false;
     }
-  }, [user, ensureSetup, flushPending, reconcile, runMaintenance]);
+  }, [user, ensureSetup, refreshPartnerKey, flushPending, reconcile, runMaintenance]);
 
   useEffect(() => {
     syncNowRef.current = syncNow;
@@ -648,7 +775,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
     setLoading(true);
     (async () => {
-      const cached = (await loadJSON<Note[]>(`${StorageKeys.notes}.${uid}`, [])).map(normalizeCached);
+      const rawCached = await loadJSON<Note[]>(`${StorageKeys.notes}.${uid}`, []);
+      const cached = rawCached.map(normalizeCached);
       const queue = await loadJSON<PendingQueue>(`${StorageKeys.pending}.${uid}`, { dirty: [], deleted: [] });
       const storedSeen = await loadJSON<Record<string, number> | null>(`${StorageKeys.seen}.${uid}`, null);
       const storedPinned = await loadJSON<Record<string, true>>(`${StorageKeys.pinned}.${uid}`, {});
@@ -669,7 +797,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         seenRef.current = storedSeen;
         setSeenState(storedSeen);
       } else {
-        const baseline = Object.fromEntries(cached.map((n) => [n.id, n.updatedAt]));
+        // From the stored timestamps: normalizeCached may have reset some to force a refetch.
+        const baseline = Object.fromEntries(rawCached.map((n) => [n.id, n.updatedAt]));
         seenRef.current = baseline;
         setSeenState(baseline);
         saveJSON(`${StorageKeys.seen}.${uid}`, baseline).catch(() => {});
@@ -838,6 +967,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     };
     const next = [note, ...notesRef.current];
     setNotes(next);
+    dirtyRef.current.add(note.id); // in the same tick, so a reconcile can't drop the new note
     await persistCache(next);
     touchSeen(note.id, note.updatedAt);
     await markDirty(note.id);
@@ -887,6 +1017,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         const ts = Date.now();
         const next = notesRef.current.map((n) => (n.id === id ? { ...n, ...patch, updatedAt: ts } : n));
         setNotes(next);
+        dirtyRef.current.add(id); // in the same tick, so a reconcile can't swap the old copy back in
         await persistCache(next);
         touchSeen(id, ts);
         await markDirty(id);
@@ -917,16 +1048,18 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         let keys: Partial<Note> = {};
         let rotated: (Opened & { ciphertext: string }) | null = null;
         if (isEncrypted(current)) {
-          const o = await decryptFor(current);
-          const identity = identityRef.current!;
-          const me = { userId: uid!, publicKey: identity.publicKey };
           const p = partnerRef.current;
           if (!current.isShared) {
             // Sharing: wrap for the partner now if trusted; otherwise maintenance does it after verification.
-            if (p && canWrapFor(p.status)) keys = { noteKeys: await addReader(expoDeps, id, o.noteKey, current.noteKeys ?? {}, p) };
+            // Only the note key is needed (unwrapped from my wrap), never the text.
+            const noteKey = await noteKeyFor(current);
+            if (p && canWrapFor(p.status)) keys = { noteKeys: await addReader(expoDeps, id, noteKey, current.noteKeys ?? {}, p) };
           } else {
             // Unsharing: fresh key, owner only, so later edits stay hidden from the partner.
             // A partner key that changed and isn't re-verified is never wrapped for (spec, "Partner key trust").
+            const o = await decryptFor(current); // re-encrypting needs the text
+            const identity = identityRef.current!;
+            const me = { userId: uid!, publicKey: identity.publicKey };
             const owner = rotationReader(current.ownerId, me, p && canWrapFor(p.status) ? p : null);
             if (!owner) throw new E2eeError('no-key');
             const s = await sealNote(expoDeps, id, o.plain, [owner]);
@@ -949,7 +1082,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         await markDirty(id);
         void syncNow();
       }),
-    [uid, decryptFor, setOpenedEntry, setNotes, persistCache, markDirty, syncNow, touchSeen],
+    [uid, noteKeyFor, decryptFor, setOpenedEntry, setNotes, persistCache, markDirty, syncNow, touchSeen],
   );
 
   const setLock = useCallback<NotesContextValue['setLock']>(
@@ -1022,7 +1155,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       openLocked,
       closeLocked,
       partnerKey,
+      refreshPartnerKey,
       verifyPartner,
+      rejectPartner,
     }),
     [
       notes,
@@ -1047,7 +1182,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       openLocked,
       closeLocked,
       partnerKey,
+      refreshPartnerKey,
       verifyPartner,
+      rejectPartner,
     ],
   );
 

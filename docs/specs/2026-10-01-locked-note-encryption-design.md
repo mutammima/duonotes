@@ -43,7 +43,7 @@ a PIN-derived key (`PIN_LENGTH` is 4, i.e. 10,000 guesses against any database c
 | Reads the database (dashboard, service key, RLS bug, Supabase backup) | Reads every locked note | Sees ciphertext and metadata only |
 | Has the phone's app storage (AsyncStorage dump, unencrypted backup) | Reads every locked note | Sees ciphertext; the private key is in the Keychain, not AsyncStorage |
 | Holds the unlocked phone | Blocked by the PIN / Face ID gate | Same gate; the key is only used after it passes |
-| Controls the server and swaps a public key | n/a | Caught by the safety code (below) once compared |
+| Controls the server and swaps a public key | n/a | Caught by the safety codes (below) once compared: each phone's code for a key is fixed by the real key, so a swapped key must hit that 40-bit code (a second preimage, ~2^40 key generations) |
 | Has the encrypted iPhone backup **and** its password | n/a | Can recover the key (accepted, decision 3) |
 | Has WRITE access to the database | Can rewrite any note | Can replace or roll back a locked note's content (wraps don't prove who made them); cannot read it. Confidentiality only — sender-authenticated wraps are a follow-up |
 
@@ -68,9 +68,14 @@ All primitives are standard; nothing is invented here.
   - AES-256-GCM(`K`, random nonce, AAD `duonotes:wrap:v1:<noteId>`) over the note key;
   - stored as `"v1." + fp + "." + base64(E ‖ nonce ‖ ct ‖ tag)` in `note_keys[<readerUserId>]`,
     where `fp` is the first 16 hex chars of SHA-256(R), so a stale wrap is detectable after a re-key.
-- **Safety code:** `SHA-256("duonotes:safety:v1" ‖ min(Pa,Pb) ‖ max(Pa,Pb))`. The first
-  5 bytes are shown as **12 digits in three groups** (`4821 0937 5560`), the same on
-  both phones regardless of order. Digits rather than words, to avoid shipping a word list.
+- **Safety codes (one per key):** `code(P) = SHA-256("duonotes:safety:v2" ‖ P)`. The first
+  5 bytes are shown as **12 digits in three groups** (`4821 0937 5560`). Each phone shows
+  *Your code* (its own key) and *Partner's code* (the key it holds for the partner); each
+  phone's *Your code* must equal the other phone's *Partner's code*. Per-key codes rather
+  than one code over both keys: a combined code is a 40-bit collision target (~2^20 work),
+  while a per-key code is fixed by the real key, so a swapped key needs a second preimage
+  (~2^40). Digits rather than words, to avoid shipping a word list. (Revised 2026-10-03; the
+  earlier combined `v1` code was never compared by anyone, so nothing migrates.)
 - **Versioning:** every stored blob is prefixed `v1.`. Unknown versions are refused, never guessed.
 
 AES runs in `expo-crypto` 57's native AES-GCM on device (already in the installed
@@ -114,6 +119,11 @@ Settings until the codes are compared. If the partner's key later changes:
 - the Settings → Partner row says *"{name}'s key changed — verify again"*;
 - **no note key is wrapped for the new key until it is verified**.
 
+The partner's key is re-read on every sync and again when Verify is opened, and
+*They match* trusts exactly the key whose code was shown. *They don't match* stores
+that key as rejected: it is treated like a changed key (no wraps) until the codes are
+compared again and match.
+
 **Lock a note** (owner or partner, as today):
 1. Ensure the identity key exists.
 2. Generate a note key, then encrypt `{title, body}`.
@@ -131,14 +141,19 @@ Leaving the screen or backgrounding the app drops it, matching the existing
 each locked shared note it can decrypt. If a trusted partner key has no wrap, it adds
 one. So sharing never blocks: until the wrap lands, the partner sees
 *"🔒 Waiting for {owner}'s phone to share the key"*. The same pass re-wraps for a
-partner who re-keyed, once that key is verified.
+partner who re-keyed, once that key is verified. The wrap is uploaded as a
+compare-and-set update of `note_keys` alone, guarded by the expected `ciphertext`; if
+the row changed meanwhile, nothing is written and the row is read again.
 
 **Unshare a locked note.** Rotate: a new note key, re-encrypted, `note_keys` = {owner}.
 
 **Remove a lock.** Decrypt, write readable `title`/`body`, and set `ciphertext` and `note_keys` to null.
 
 **Existing locked notes.** After key setup, each owner's phone encrypts its own
-`lock_type != 'none'` notes that have `ciphertext is null`. Readable copies may persist
+`lock_type != 'none'` notes that have `ciphertext is null`. The upload is
+compare-and-set (`… where ciphertext is null`), so a stale local copy can never seal
+over a row that is already encrypted; cache entries written by a pre-encryption build
+are downloaded again before maintenance trusts them. Readable copies may persist
 in Supabase backups until they expire; the README says so.
 
 **Account deletion.** Delete the private key from the Keychain as part of
@@ -160,12 +175,12 @@ is saved**. The note stays as it was and the user sees an error.
 |---|---|---|
 | `src/lib/e2ee/aes.ts` | `seal(key, plaintext, aad)` / `open(key, blob, aad)` | `expo-crypto` (app); WebCrypto (tests) |
 | `src/lib/e2ee/envelope.ts` | `encryptNote` / `decryptNote` / `wrapKey` / `unwrapKey` (pure) | `aes.ts`, `@noble/*` |
-| `src/lib/e2ee/safety-code.ts` | `safetyCode(pubA, pubB)` (pure) | `@noble/hashes` |
+| `src/lib/e2ee/safety-code.ts` | `safetyCode(publicKey)` (pure) | `@noble/hashes` |
 | `src/lib/e2ee/keys.ts` | load/create identity, publish `public_key`, trusted partner key | SecureStore, Supabase |
 | `src/context/notes-context.tsx` | encrypt at the save point; `openLocked(id)`; wrap reconciliation; map new columns | the units above |
 | `src/app/note/[id].tsx` | call `openLocked` after the gate | context |
 | `src/components/note-row.tsx`, `note-list.tsx` | "Locked note" title; exclude encrypted notes from search | — |
-| Settings: *Verify {partner}* | show the code, mark verified, key-changed banner | `safety-code.ts`, `keys.ts` |
+| Settings: *Verify {partner}* | re-read the partner's key, show both codes, mark verified or rejected, key-changed banner | `safety-code.ts`, `keys.ts` |
 | `src/lib/crypto.ts` | delete the `encryptBody` / `decryptBody` placeholders | — |
 
 ## Testing
@@ -180,7 +195,7 @@ in PR #34.
 - AAD: a blob or wrap moved to another note ID fails.
 - Wrong reader: a wrap for A cannot be opened with B's key.
 - RFC 7748 X25519 test vectors; RFC 5869 HKDF vectors.
-- Safety code: order-independent, stable, different keys give a different code.
+- Safety code: per-key known-answer test, stable, different keys give a different code.
 - Save-point invariant: for a locked note, what is cached and queued has empty
   `title`/`body` and a `v1.` ciphertext.
 
@@ -195,7 +210,7 @@ Supabase dashboard shows blank `title`/`body` for locked notes.
 2. Compute the fingerprint in the **main checkout** and compare it to the installed
    build (`91cc32d7…` as of 2026-10-01). Then run `npm run ota`.
 3. Both phones open DuoNotes: keys are created, public keys published, and existing locked notes encrypt.
-4. Compare the safety code once.
+4. Compare the safety codes once (each phone's *Your code* against the other's *Partner's code*).
 5. Spot-check the dashboard.
 
 ## Open risks

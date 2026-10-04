@@ -13,7 +13,7 @@ import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useAppLock } from '@/context/app-lock-context';
 import { useAuth } from '@/context/auth-context';
-import { useNotes } from '@/context/notes-context';
+import { type PartnerKeyCheck, useNotes } from '@/context/notes-context';
 import { type ThemePreference, useThemePreference } from '@/context/theme-context';
 import { useTheme } from '@/hooks/use-theme';
 import { clearPin, getBiometricStatus, isPinSet, setPin, type BiometricStatus } from '@/lib/security';
@@ -24,7 +24,7 @@ export default function SettingsScreen() {
   const { user, signOut, linkPartner, updateName, deleteAccount } = useAuth();
   const { preference, setPreference, accentHue, setAccentHue } = useThemePreference();
   const { enabled: appLockEnabled, setEnabled: setAppLockEnabled } = useAppLock();
-  const { partnerKey, verifyPartner } = useNotes();
+  const { partnerKey, refreshPartnerKey, verifyPartner, rejectPartner } = useNotes();
 
   const [pinSet, setPinSet] = useState(false);
   const [biometric, setBiometric] = useState<BiometricStatus | null>(null);
@@ -152,30 +152,50 @@ export default function SettingsScreen() {
     changed: '⚠️ Key changed — verify again before sharing locked notes',
   } as const;
 
-  const confirmPartnerKey = () => {
-    if (!partnerKey.code) {
+  const confirmPartnerKey = async () => {
+    // Re-read the partner's key first, so the codes shown are for the key the server holds now.
+    let check: PartnerKeyCheck;
+    try {
+      check = await refreshPartnerKey();
+    } catch {
+      Alert.alert("Couldn't check your partner's key", 'Try again.');
+      return;
+    }
+    const { myCode, partnerCode, key } = check;
+    if (!partnerCode || !key) {
       Alert.alert('Not ready yet', 'Your partner needs to open the updated DuoNotes once. Then try again.');
       return;
     }
+    if (!myCode) {
+      Alert.alert('Not ready yet', "Encryption isn't set up on this phone yet. Try again in a moment.");
+      return;
+    }
     Alert.alert(
-      'Compare this code',
-      `${partnerKey.code}\n\nOpen this screen on your partner's phone. All 12 digits must match exactly. Compare in person or on a call — not by text message.`,
+      'Compare these codes',
+      `Your code: ${myCode}\nPartner's code: ${partnerCode}\n\nOn your partner's phone, their 'Your code' must match your 'Partner's code', and their 'Partner's code' must match your 'Your code'. Compare in person or on a call — not by text message.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: "They don't match",
           style: 'destructive',
-          onPress: () =>
-            Alert.alert(
-              "Don't share locked notes",
-              "Someone may be interfering with your keys. Your locked notes stay encrypted, but don't share new ones until the codes match.",
-            ),
+          onPress: () => {
+            // Stop wrapping note keys for this key until the codes are compared again and match.
+            rejectPartner(key)
+              .catch(() => {})
+              .finally(() =>
+                Alert.alert(
+                  "Don't share locked notes",
+                  "Someone may be interfering with your keys. Your locked notes stay encrypted, and this phone won't share new ones until the codes match.",
+                ),
+              );
+          },
         },
         {
           text: 'They match',
           onPress: () => {
-            verifyPartner().catch(() => {
-              Alert.alert("Couldn't verify", 'Try again.');
+            // Trusts exactly the key whose code was shown; refuses if it changed meanwhile.
+            verifyPartner(key).catch(() => {
+              Alert.alert("Couldn't verify", "Your partner's key may have changed. Open Verify again and compare the codes.");
             });
           },
         },
