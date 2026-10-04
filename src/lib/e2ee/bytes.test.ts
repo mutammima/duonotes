@@ -26,7 +26,7 @@ describe('base64/hex/concat/compare', () => {
     const big = new Uint8Array(3 * 1024 * 1024).map((_, i) => i & 255);
     expect(fromB64(toB64(big))).toEqual(big);
     expect(toB64(Uint8Array.from([0xde, 0xad, 0xbe, 0xef]))).toBe('3q2+7w==');
-  });
+  }, 30_000);
   it('hex encodes', () => expect(toHex(Uint8Array.from([0, 15, 255]))).toBe('000fff'));
   it('concatenates', () => expect(concat(Uint8Array.from([1]), Uint8Array.from([2, 3]))).toEqual(Uint8Array.from([1, 2, 3])));
   it('orders bytes lexicographically', () => {

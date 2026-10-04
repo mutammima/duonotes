@@ -45,6 +45,7 @@ a PIN-derived key (`PIN_LENGTH` is 4, i.e. 10,000 guesses against any database c
 | Holds the unlocked phone | Blocked by the PIN / Face ID gate | Same gate; the key is only used after it passes |
 | Controls the server and swaps a public key | n/a | Caught by the safety code (below) once compared |
 | Has the encrypted iPhone backup **and** its password | n/a | Can recover the key (accepted, decision 3) |
+| Has WRITE access to the database | Can rewrite any note | Can replace or roll back a locked note's content (wraps don't prove who made them); cannot read it. Confidentiality only — sender-authenticated wraps are a follow-up |
 
 ## Cryptography
 
