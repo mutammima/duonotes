@@ -1,0 +1,4 @@
+# Written into node_modules by the iOS build (expo-modules-jsi build-xcframework.sh).
+# Build output, not an input: without this line a fresh `npm ci` changes the
+# fingerprint, and OTA updates stop reaching the installed app.
+node_modules/expo-modules-jsi/apple/Products/**
