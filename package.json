@@ -48,6 +48,7 @@
     "@tiptap/extension-gapcursor": "^3.27.4",
     "@tiptap/react": "^3.27.4",
     "@types/react": "~19.2.2",
+    "@types/react-dom": "~19.2.7",
     "@vitejs/plugin-react": "^5.2.0",
     "eslint": "^9.0.0",
     "eslint-config-expo": "~57.0.0",
