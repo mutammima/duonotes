@@ -31,6 +31,9 @@ export const StorageKeys = {
   // so wipeLocalUserData below can clear it without importing that module —
   // collections.ts imports this one, and the cycle would be real.
   collections: 'duonotes.collections', // AsyncStorage prefix — `${collections}.${userId}`
+  // End-to-end encryption (docs/specs/2026-10-01-locked-note-encryption-design.md).
+  e2eeSecret: 'duonotes.e2ee.sk', // SecureStore prefix — `${e2eeSecret}.${userId}`, X25519 private key (base64)
+  e2eePartner: 'duonotes.e2ee.partner', // AsyncStorage prefix — `${e2eePartner}.${userId}` -> PartnerTrust
 } as const;
 
 /* ------------------------------- AsyncStorage ------------------------------ */
@@ -96,8 +99,13 @@ export async function wipeLocalUserData(userId: string): Promise<void> {
     StorageKeys.seen,
     StorageKeys.pinned,
     StorageKeys.collections,
+    StorageKeys.e2eePartner,
   ].map((prefix) => `${prefix}.${userId}`);
 
   await Promise.all([...perUser, StorageKeys.appLock].map(removeJSON));
   await deleteSecret(StorageKeys.pin);
+  // The identity key. Same accessibility as when it was written (keys.ts).
+  await SecureStore.deleteItemAsync(`${StorageKeys.e2eeSecret}.${userId}`, {
+    keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
+  });
 }

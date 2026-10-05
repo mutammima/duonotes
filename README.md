@@ -26,7 +26,7 @@ note _and_ protect it with a **PIN** or **biometrics** (Face ID / Touch ID).
 | **Biometric lock** | ✅ Working | Face ID / Touch ID via `expo-local-authentication` |
 | App lock + app-switcher privacy | ✅ Working | Screen hidden in the app switcher |
 | In-app account deletion | ✅ Working | Settings → delete account |
-| At-rest note **encryption** | 🚧 Placeholder | Lock is a UI + keychain gate today; see the seam in `src/lib/crypto.ts` |
+| End-to-end **encryption** of locked notes | ✅ Working | Title + body encrypted on the phone; see the spec in docs/specs |
 
 > **You must set up the Supabase backend once** (5 minutes, free) before notes will
 > sync — see **[Backend setup](#-backend-setup-supabase)**. Please also read
@@ -75,7 +75,7 @@ src/
 │   ├── types.ts              # Note / User domain types
 │   ├── storage.ts            # SecureStore helpers (PIN)
 │   ├── security.ts           # PIN set/verify + biometric helpers
-│   └── crypto.ts             # PIN hashing + the encrypt/decrypt seam (TODO)
+│   └── crypto.ts             # PIN hashing + id/salt generation (note encryption is in e2ee/)
 ├── constants/theme.ts        # Colors, spacing, fonts
 └── hooks/                    # Color scheme / theme hooks
 
@@ -249,20 +249,24 @@ Being honest here matters more than sounding impressive:
 - Locked notes are **gated**: contents aren't shown until you pass a PIN or biometric
   challenge, on each device.
 
-**Placeholder / not yet done (don't oversell this)**
-- **No at-rest encryption yet.** A locked note's body is gated in the UI but stored
-  as plaintext in the database (protected by RLS + your Supabase account, not by
-  encryption). `encryptBody` / `decryptBody` in `src/lib/crypto.ts` are the seam
-  where **AES-256-GCM with a PIN-derived key** (true end-to-end encryption) should go.
+**Encryption (locked notes)**
+- Locked notes' titles and bodies are encrypted on the phone (AES-256-GCM, a key per
+  note, X25519 to share it with your partner). Supabase and the on-device cache hold
+  only ciphertext. Compare the safety codes once in Settings → Partner: each phone's
+  *Your code* must match the other phone's *Partner's code* (in person or on a call).
+  This is what catches a server that swaps in its own public key.
+- **No recovery, by design:** lose the phone without an Apple transfer or backup and
+  its private locked notes are gone. Shared ones survive on your partner's phone.
+- Still visible to the server: who owns a note, whether it's locked or shared, and when it changed.
+- Readable copies from before encryption may remain in Supabase backups until they expire.
+- Protects what notes *say*, not their integrity: someone with write access to the database could replace or roll back a locked note's content, though not read it.
 
 ## 🗺️ Roadmap
 
-1. AES-GCM field-level **end-to-end encryption** of locked note bodies (key derived
-   from PIN, so not even the server can read them).
-2. Conflict-aware collaborative editing on shared notes (currently last-write-wins).
-3. Checklists (rich text, images and drawing are done).
-4. Push notifications when your partner shares or edits a note.
-5. Automated tests for sync, locking and (once it exists) encryption.
+1. Conflict-aware collaborative editing on shared notes (currently last-write-wins).
+2. Checklists (rich text, images and drawing are done).
+3. Push notifications when your partner shares or edits a note.
+4. Automated tests for sync and locking (encryption has its own).
 
 ---
 

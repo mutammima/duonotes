@@ -30,6 +30,11 @@ export interface Note {
   isShared: boolean;
   /** How this note is protected. `'none'` opens without a challenge. */
   lockType: LockType;
+  /** `v1.` AES-GCM blob of {title, body} for an encrypted locked note, else null.
+   *  While set, `title` and `body` are always ''. */
+  ciphertext: string | null;
+  /** userId -> wrapped note key, for everyone who can open it. */
+  noteKeys: Record<string, string> | null;
 }
 
 /** A row from the `notes` table exactly as Supabase returns it. */
@@ -41,4 +46,6 @@ export interface NoteRow {
   lock_type: LockType;
   is_shared: boolean;
   updated_at: string;
+  ciphertext: string | null;
+  note_keys: Record<string, string> | null;
 }

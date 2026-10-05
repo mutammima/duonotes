@@ -6,12 +6,7 @@
  *     The raw PIN is never stored; only salt + hash live in SecureStore.
  *   - Cryptographically-strong id / salt generation.
  *
- * What is NOT yet implemented (placeholder — do not oversell to users):
- *   - At-rest AES-GCM encryption of note bodies. Right now a locked note's
- *     content is *gated* behind a PIN/biometric challenge in the UI and stored
- *     in the OS keychain-backed SecureStore, but the note body itself is not
- *     yet encrypted with a key derived from the PIN. `encryptBody` /
- *     `decryptBody` below are the seam where that belongs. See README.
+ * Note encryption lives in src/lib/e2ee/ (docs/specs/2026-10-01-locked-note-encryption-design.md).
  */
 
 import * as Crypto from 'expo-crypto';
@@ -43,17 +38,4 @@ export function secretsMatch(a: string, b: string): boolean {
     result |= a.charCodeAt(i) ^ b.charCodeAt(i);
   }
   return result === 0;
-}
-
-/**
- * TODO(security): replace with AES-256-GCM using a key derived from the user's
- * PIN via PBKDF2/Argon2. Until then these are identity functions and note
- * bodies are stored in plaintext within the device's app sandbox.
- */
-export async function encryptBody(plaintext: string /* , key: string */): Promise<string> {
-  return plaintext;
-}
-
-export async function decryptBody(ciphertext: string /* , key: string */): Promise<string> {
-  return ciphertext;
 }
