@@ -20,3 +20,12 @@ the egress fix sat unapplied on both phones for three days.
   Different values mean the update will not land, and you need a rebuild + resideload.
 - `npx expo-updates fingerprint:generate --platform ios` prints the current tree's
   hash plus every input, which is how you find what moved it.
+  `npx eas-cli fingerprint:compare <installed hash>` diffs against a fingerprint EAS
+  already has, which works even when the old `node_modules` is gone.
+- The iOS build writes `ExpoModulesJSI.xcframework` into
+  `node_modules/expo-modules-jsi/apple/Products/`. Before `.fingerprintignore`
+  excluded it, a fresh `npm ci` deleted it and moved the fingerprint
+  (`91cc32d7` → `3b084960`), so binaries built before October 2026 can't take OTAs
+  from a clean install. The October 2026 rebuild is `4286e582` and is stable either way.
+- Xcode 27 fails the Release build on pods whose deployment target is below 15.0;
+  `plugins/with-pod-deployment-target.js` raises them to the app's 16.4.
