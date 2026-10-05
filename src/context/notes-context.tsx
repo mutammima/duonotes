@@ -360,6 +360,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let active = true;
     if (!uid) {
+      // Signed out: drop the previous account's notes. Deliberately an effect
+      // keyed on uid -- this is the sync engine's reset, and restructuring it
+      // without tests is a bigger risk than one extra render on sign-out.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setNotes([]);
       dirtyRef.current = new Set();
       deletedRef.current = new Set();

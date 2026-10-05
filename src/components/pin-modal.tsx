@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Modal, Pressable, StyleSheet, View } from 'react-native';
 
 import { PIN_LENGTH, PinPad } from '@/components/pin-pad';
@@ -24,14 +24,18 @@ export function PinModal({ visible, mode, title, onSubmit, onCancel }: PinModalP
   const [firstPass, setFirstPass] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Reset whenever the modal opens/closes.
-  useEffect(() => {
+  // Reset when the modal closes. Done during render rather than in an effect
+  // (React's "adjusting state when a prop changes"), so the cleared state never
+  // paints for a frame first.
+  const [wasVisible, setWasVisible] = useState(visible);
+  if (visible !== wasVisible) {
+    setWasVisible(visible);
     if (!visible) {
       setEntry('');
       setFirstPass(null);
       setError(null);
     }
-  }, [visible]);
+  }
 
   const confirming = mode === 'set' && firstPass !== null;
   const subtitle = confirming ? 'Re-enter your PIN to confirm' : `Enter a ${PIN_LENGTH}-digit PIN`;

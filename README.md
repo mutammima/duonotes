@@ -5,23 +5,27 @@ Expo + React Native (TypeScript). It scratches an itch that stock iOS Notes can'
 once you share a note, iOS gives you no way to lock it. DuoNotes lets you share a
 note _and_ protect it with a **PIN** or **biometrics** (Face ID / Touch ID).
 
-> **Built on Windows, runs on iPhones.** The whole project is designed so you can
-> develop on a Windows PC, test instantly on your iPhones with **Expo Go**, and
-> produce a real installable **`.ipa`** with **EAS Build** (Expo's cloud builders —
-> no Mac required).
+> **How it ships today:** built as an unsigned `.ipa` on a Mac
+> ([`docs/BUILD-IPA.md`](./docs/BUILD-IPA.md)), installed with **SideStore**, and
+> patched over the air with `npm run ota`. Read [`AGENTS.md`](./AGENTS.md) before
+> publishing an update — an innocent-looking change can stop it from ever landing.
 
 ---
 
-## ✨ Features in this scaffold
+## ✨ Features
 
 | Area | Status | Notes |
 |------|--------|-------|
 | Tab navigation (Expo Router) | ✅ Working | Notes · Shared · Settings |
 | Email/password auth | ✅ Working | Supabase Auth, session persists across launches |
-| Create / edit / delete notes | ✅ Working | iOS-Notes-style minimal editor, auto-saved |
+| Rich notes | ✅ Working | TipTap editor in a WebView (`web-editor/`), photos, inline drawing |
 | Share a note with your partner | ✅ Working | Real-time sync via Supabase (link accounts by email) |
+| Partner presence | ✅ Working | See when they're in the app, in their accent colour |
+| Collections, pinning, swipe actions | ✅ Working | Private per person |
 | **PIN lock** | ✅ Working | One device PIN protects any PIN-locked note |
 | **Biometric lock** | ✅ Working | Face ID / Touch ID via `expo-local-authentication` |
+| App lock + app-switcher privacy | ✅ Working | Screen hidden in the app switcher |
+| In-app account deletion | ✅ Working | Settings → delete account |
 | At-rest note **encryption** | 🚧 Placeholder | Lock is a UI + keychain gate today; see the seam in `src/lib/crypto.ts` |
 
 > **You must set up the Supabase backend once** (5 minutes, free) before notes will
@@ -128,11 +132,11 @@ other tables or touches `auth.users`.
 
 ## 🚀 Getting started (test in seconds with Expo Go)
 
-### Prerequisites (Windows)
+### Prerequisites
 
 1. **Node.js LTS** — https://nodejs.org (verify with `node --version`).
 2. **Expo Go** app on both iPhones — from the App Store.
-3. Your PC and iPhones on the **same Wi-Fi network**.
+3. Your computer and iPhones on the **same Wi-Fi network**.
 
 ### Run it
 
@@ -256,8 +260,9 @@ Being honest here matters more than sounding impressive:
 1. AES-GCM field-level **end-to-end encryption** of locked note bodies (key derived
    from PIN, so not even the server can read them).
 2. Conflict-aware collaborative editing on shared notes (currently last-write-wins).
-3. Rich text / images / checklists.
+3. Checklists (rich text, images and drawing are done).
 4. Push notifications when your partner shares or edits a note.
+5. Automated tests for sync, locking and (once it exists) encryption.
 
 ---
 
@@ -270,6 +275,8 @@ npm run android      # open in Android emulator
 npm run web          # run in the browser
 npm run lint         # Expo lint
 npx tsc --noEmit     # type-check
+npm run build:editor # rebuild src/lib/editor-html.js after ANY web-editor/ or @tiptap change
+npm run ota          # publish an over-the-air update — read AGENTS.md first
 ```
 
 ---
